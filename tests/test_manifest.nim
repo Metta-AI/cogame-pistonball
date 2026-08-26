@@ -150,6 +150,33 @@ suite "the manifest":
       check file.len > 0
       check page["content"]["value"].getStr() == readFile(root / file)
 
+  test "the certification fleet plays the WHOLE fixture, not a 120-tick sprint":
+    # N5: `certification.players` is 1 baseline + 19 metronomes, not the twenty
+    # baselines design.md:1274-1277 describes, and that is deliberate (844697a):
+    # twenty wavebots deliver in about 120 ticks, the fixture replay came out
+    # 194 ticks / 8 s long, and the viewer smoke's 12 s soak read it as frozen.
+    # The property the fixture actually needs is LENGTH, so pin the length —
+    # otherwise the next physics change quietly re-breaks the smoke.
+    var kinds: seq[Baseline]
+    for entry in manifest["certification"]["players"]:
+      var scripted = ""
+      for declared in manifest["player"]:
+        if declared["id"].getStr() == entry["player_id"].getStr():
+          scripted = declared["env"]["PLAYER_SCRIPTED"].getStr()
+      checkpoint(entry["player_id"].getStr())
+      check scripted.len > 0
+      kinds.add(parseBaseline(scripted))
+    check kinds.len == 20
+    let ticks = manifest["certification"]["game_config"]["maxTicks"].getInt
+    # The fixture's seed is the sentinel, so certification runs on a random
+    # seed (see the startup tests): sample several rather than pin one.
+    for seed in [4417231, 104729, 999331]:
+      checkpoint("seed " & $seed)
+      let game = runScripted(seed, kinds, maxTicks = ticks)
+      check not game.delivered()
+      # 24 fps: the viewer smoke soaks for 12 s = 288 ticks of replay.
+      check game.tickCount >= ticks
+
   test "the secret namespace equals game.name, and compose agrees on the image":
     let name = manifest["game"]["name"].getStr()
     check "secret://coworld/" & name & "/anthropic_api_key" ==
