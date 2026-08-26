@@ -4,7 +4,28 @@
 
 import
   std/[os, strutils, unittest],
+  crunchy,
   ../src/pistonball/[sim]
+
+const StarterChromeSha256 =
+  "7ace7287e0d19bf0fddb2362c55e4d76dfb44adcd4fbc8d1743b0557ced72f7c"
+    ## sha256 of `client/chrome_common.js` in Metta-AI/coworld-ctf, the starter
+    ## this repo's chrome was taken from. The file is copied BYTE-FOR-BYTE and
+    ## the one identifier it needs (`window.CTF_WIRE`) is aliased in
+    ## `wire_constants.nim` rather than edited into the shared chrome, so this
+    ## digest is a constant, not a moving target: a diff here is either an
+    ## unrecorded fork of the shared chrome or a starter bump, and both need
+    ## saying out loud.
+
+const StarterCoreSha256 =
+  "172c4680129d608fd687cfd86436b675eef32c8652be6afe5f3189dd20c5aa9c"
+    ## sha256 of the starter's `client/broadcast_core.js`. Ours is that file
+    ## with `CTF_WIRE` renamed to `PISTONBALL_WIRE` and nothing else, so
+    ## undoing the rename must reproduce this digest exactly.
+
+proc hex(digest: array[32, uint8]): string =
+  for value in digest:
+    result.add(toHex(int(value), 2).toLowerAscii())
 
 let
   root = currentSourcePath().parentDir().parentDir()
@@ -16,8 +37,9 @@ let
 
 suite "the broadcast chrome":
   test "chrome_common.js is the starter's file, unedited":
-    # Byte-for-byte: the ONLY identifier it needs is aliased in the wire
-    # constants block rather than edited into the shared chrome.
+    # Byte-for-byte, and PINNED: substring checks cannot tell a copy from a
+    # rewrite that happens to contain the same three strings.
+    check hex(sha256(chrome)) == StarterChromeSha256
     check "window.ChromeCommon = function (ctx)" in chrome
     check "window.CTF_WIRE || {}" in chrome
     check "pistonball" notin chrome
@@ -92,6 +114,10 @@ suite "the broadcast chrome":
   test "broadcast_core.js differs from the starter's copy in ONE identifier":
     check "window.PISTONBALL_WIRE" in core
     check "window.CTF_WIRE" notin core
+    # "Exactly one identifier" is checkable rather than assertable: undo the
+    # rename and the file must hash back to the starter's copy, byte for byte.
+    check hex(sha256(core.replace("window.PISTONBALL_WIRE",
+      "window.CTF_WIRE"))) == StarterCoreSha256
 
   test "static_replay.js sets both machine-readable markers":
     check "data-replay-loaded" in staticReplay
