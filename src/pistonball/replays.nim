@@ -257,8 +257,22 @@ proc applyReplayEvents(replay: var ReplayPlayer, sim: var SimServer) =
         let node = parseJson(chat.message)
         if node{"k"}.getStr() == "script":
           let
+            seat = node{"seat"}.getInt(-1)
             piston = node{"piston"}.getInt(-1)
             say = node{"say"}.getStr()
+          ## The per-seat llm/fallback tally the endcard's LLM/FB column
+          ## reads. The live server counts it as it decides; a replay has only
+          ## the records, so it counts them here — non-hashed presentation
+          ## fields, and they ride the keyframe alongside the chat cursor that
+          ## produced them, so a seek or a loop never double-counts.
+          case node{"source"}.getStr()
+          of "llm":
+            if seat >= 0 and seat < sim.llmTurns.len:
+              inc sim.llmTurns[seat]
+          of "fallback":
+            if seat >= 0 and seat < sim.fallbackTurns.len:
+              inc sim.fallbackTurns[seat]
+          else: discard
           if piston >= 0 and say.len > 0:
             sim.holdSay(piston, say, sim.tickCount + 60)
       except CatchableError:
