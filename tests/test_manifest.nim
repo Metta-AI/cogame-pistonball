@@ -121,6 +121,23 @@ suite "the manifest":
       let node = manifest["game"]["protocols"][key]
       check node["type"].getStr() == "text"
       check node["value"].getStr().len > 200
+    # …and they are two DIFFERENT documents. One text under both keys is a
+    # shape that validates and a contract that does not: the player socket's
+    # reader needs the registration frame and the window filter, the global
+    # reader needs the snapshot, the chrome channel and the static bundle.
+    let
+      player = manifest["game"]["protocols"]["player"]["value"].getStr()
+      global = manifest["game"]["protocols"]["global"]["value"].getStr()
+    check player != global
+    for needle in ["/player?slot=", "\"type\":\"register\"",
+                   "SEATS SEND NO INPUTS", "covers_pistons"]:
+      checkpoint(needle)
+      check needle in player
+      check needle notin global
+    for needle in ["GET /global", "4090", "static-replay-viewer", "COWLDPST"]:
+      checkpoint(needle)
+      check needle in global
+      check needle notin player
     check manifest["game"]["docs"]["readme"]["type"].getStr() == "text"
     check manifest["game"]["docs"]["readme"]["value"].getStr().len > 200
     check manifest["game"]["docs"]["pages"].len == 3
