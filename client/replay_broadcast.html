@@ -1330,13 +1330,12 @@ body[data-embed] #board { top: 0; height: 100%; }
   var COG_BASE = window.PistonballStaticReplay
     ? '.'
     : location.pathname.replace(/\/clients?\/[^/]*$/, '') + '/client';
+  // The eye-level cog masters are NOT preloaded here: #fpv (the only thing
+  // that ever blitted them) is removed for pistonball, so fetching four
+  // teams x two poses would be eight guaranteed 404s on every page load and
+  // nothing would ever draw them. cogArtFor() below still answers, and still
+  // returns null, so the starter's fallback path is untouched.
   var COG_ART = {}, COG_ART_GUN = {};
-  ['red', 'blue', 'green', 'yellow'].forEach(function (team) {
-    COG_ART[team] = new Image();
-    COG_ART[team].src = COG_BASE + '/soldier_' + team + '_front.png';
-    COG_ART_GUN[team] = new Image();
-    COG_ART_GUN[team].src = COG_BASE + '/soldier_' + team + '_front_gun.png';
-  });
   function cogArtReady(img) { return img && img.complete && img.naturalWidth > 0; }
   // Pick the armed pose when it's ready, else the plain one, else null (the
   // caller falls back to the procedural chassis).
@@ -1444,8 +1443,12 @@ body[data-embed] #board { top: 0; height: 100%; }
                 { f: 3, w: 15.52, h: 19.87 }, { f: 5, w: 15.83, h: 20.63 },
                 { f: 6, w: 16.73, h: 21.06 }] }
     };
+    // PISTONBALL ships the empty-room PLATE and nothing else: there are no
+    // per-role character sprites in this game (twenty identical pistons and a
+    // steel ball), so the four pose carousels are not built and their twenty
+    // .webp fetches — which would be twenty 404s on every load — never happen.
     var spritesEl = $('lk-sprites');
-    ['green', 'blue', 'yellow', 'red'].forEach(function (bot) {
+    [].forEach(function (bot) {
       var b = LK_BOTS[bot];
       var maxW = 0, maxH = 0;
       b.poses.forEach(function (p) {

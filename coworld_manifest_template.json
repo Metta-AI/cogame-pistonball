@@ -408,7 +408,32 @@
         "/bin/pistonball-player"
       ],
       "env": {
-        "PLAYER_SCRIPTED": "wavebot"
+        "PLAYER_SCRIPTED": "wavebot",
+        "PLAYER_POLICY_LABEL": "wavebot"
+      },
+      "source_url": "https://github.com/Metta-AI/cogame-pistonball/tree/main",
+      "resources": {
+        "requests": {
+          "cpu": "50m",
+          "memory": "48Mi"
+        },
+        "limits": {
+          "cpu": "500m"
+        }
+      }
+    },
+    {
+      "id": "metronome",
+      "type": "player",
+      "name": "Pistonball Metronome Filler",
+      "description": "Blind two-second ripple: never looks at the ball. No LLM.",
+      "image": "{{PISTONBALL_IMAGE}}",
+      "run": [
+        "/bin/pistonball-player"
+      ],
+      "env": {
+        "PLAYER_SCRIPTED": "metronome",
+        "PLAYER_POLICY_LABEL": "metronome"
       },
       "source_url": "https://github.com/Metta-AI/cogame-pistonball/tree/main",
       "resources": {
@@ -716,61 +741,61 @@
         "player_id": "baseline"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       },
       {
-        "player_id": "baseline"
+        "player_id": "metronome"
       }
     ],
     "game_config": {
