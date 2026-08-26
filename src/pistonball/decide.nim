@@ -401,7 +401,7 @@ proc turn*(
     # curly hands the deadline to CURLOPT_TIMEOUT, whose granularity is WHOLE
     # SECONDS, so this conversion FLOORS — `sim_config.validate` rejects a
     # sub-second value so the floor below is an identity.
-    let responses = engine.client.curl.makeRequests(
+    let responses = engine.client.sendTurnBatch(
       batch, max(1, deadlineMs div 1000))
     let latency = (getMonoTime() - started).inMilliseconds.int
     var stillOpen: seq[int]

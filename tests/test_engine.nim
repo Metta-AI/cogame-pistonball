@@ -5,7 +5,8 @@
 ## to the scripted layer instantly, with no network wait.
 
 import
-  std/[json, os, strutils, times, unittest],
+  std/[json, monotimes, os, strutils, times, unittest],
+  curly,
   ../src/pistonball/[sim, roster, scripts, control, baselines, decide, llm],
   ./helpers
 
@@ -16,6 +17,66 @@ proc llmEngine(game: SimServer): DecisionEngine =
     result.seats[seat].registered = true
     result.seats[seat].prompt = "be the shoulder the ball rolls off"
     result.seats[seat].label = "prompt"
+
+# ---------------------------------------------------------------------------
+#  A FAKE PROVIDER.
+#
+#  The turn loop's contract is invisible from outside the process: whether the
+#  twenty calls went out together or one after another, whether the retry
+#  happened once or twice, whether a throttle cancelled it, and whether a hung
+#  provider still hands the turn back inside `turnBudgetMs` all look identical
+#  from the records alone. `LlmClient.sendBatch` is the seam; this is what goes
+#  through it.
+# ---------------------------------------------------------------------------
+
+type
+  FakeBatch = object
+    size: int
+    tags: seq[string]
+    startMs, endMs: int
+  FakeProvider = ref object
+    batches: seq[FakeBatch]
+    delayMs: int
+    code: int                 ## HTTP status to answer with
+    bodyForAttempt: seq[string]  ## body per attempt; last entry repeats
+    origin: MonoTime
+
+const GoodScript = """{"note":"lift behind it","mode":"wave",""" &
+  """"trigger_m":0.8,"lead_ticks":6,"up_m":1.45,"down_m":0.1,""" &
+  """"idle_m":0.25,"speed":1.0,"blind":"idle","say":"up behind it"}"""
+
+proc anthropicBody(text: string): string =
+  $(%*{"stop_reason": "end_turn",
+       "content": [{"type": "text", "text": text}]})
+
+proc newFakeProvider(
+  bodies: seq[string], delayMs = 0, code = 200
+): FakeProvider =
+  FakeProvider(delayMs: delayMs, code: code, bodyForAttempt: bodies,
+    origin: getMonoTime())
+
+proc fakeClient(provider: FakeProvider): LlmClient =
+  ## An LlmClient that never opens a socket. `transport` is set so the turn
+  ## loop treats it as live; `curl` stays nil and is never touched.
+  let fake = provider
+  result = LlmClient(transport: ltAnthropic, model: "fake-haiku",
+    maxOutputTokens: 900)
+  result.sendBatch = proc(
+    batch: RequestBatch, timeoutSeconds: int
+  ): ResponseBatch {.gcsafe, raises: [].} =
+    let startMs = (getMonoTime() - fake.origin).inMilliseconds.int
+    if fake.delayMs > 0:
+      sleep(fake.delayMs)
+    let attempt = fake.batches.len
+    let body = fake.bodyForAttempt[min(attempt, fake.bodyForAttempt.high)]
+    var tags: seq[string]
+    for i in 0 ..< batch.len:
+      tags.add(batch[i].tag)
+      result.add((
+        response: Response(code: fake.code, url: batch[i].url, body: body),
+        error: ""))
+    fake.batches.add(FakeBatch(size: batch.len, tags: tags, startMs: startMs,
+      endMs: (getMonoTime() - fake.origin).inMilliseconds.int))
 
 suite "the decision turn":
   setup:
@@ -88,6 +149,142 @@ suite "the decision turn":
     let total = worstMs div 1000 + lobbySeconds + 1 + 20
     check total < config.wallClockBudgetSeconds
     check config.wallClockBudgetSeconds <= (60 * 1200) div 100
+
+  test "all twenty seats' calls go out in ONE parallel batch":
+    var game = seatedSim(testConfig())
+    game.phase = Playing
+    var engine = llmEngine(game)
+    let provider = newFakeProvider(@[anthropicBody(GoodScript)])
+    engine.client = fakeClient(provider)
+    let records = engine.turn(game, 0, 0)
+    check provider.batches.len == 1
+    check provider.batches[0].size == 20
+    # Every seat is in it exactly once, tagged with its own seat index…
+    for seat in 0 ..< 20:
+      var found = 0
+      for tag in provider.batches[0].tags:
+        if tag == $seat:
+          inc found
+      checkpoint("seat " & $seat)
+      check found == 1
+    # …and the twenty in-flight windows all intersect, because there is ONE
+    # window: the batch's. Sequential calls would give twenty disjoint ones.
+    let window = provider.batches[0]
+    check window.endMs >= window.startMs
+    for a in 0 ..< 20:
+      for b in 0 ..< 20:
+        check window.startMs <= window.endMs   # a_start <= b_end, both ways
+    var fallbacks = 0
+    for record in records:
+      if parseJson(record)["k"].getStr() == "fallback":
+        inc fallbacks
+    check fallbacks == 0
+    for seat in 0 ..< 20:
+      check engine.scripts[seat].source == srcLlm
+      check validScript(engine.scripts[seat])
+      check engine.scripts[seat].mode == modeWave
+
+  test "consecutive batches START at least minBatchSpacingMs apart":
+    var game = seatedSim(testConfig())
+    game.phase = Playing
+    game.config.minBatchSpacingMs = 250
+    var engine = llmEngine(game)
+    let provider = newFakeProvider(@[anthropicBody(GoodScript)])
+    engine.client = fakeClient(provider)
+    discard engine.turn(game, 0, 0)
+    discard engine.turn(game, 1, 0)
+    check provider.batches.len == 2
+    # The floor is on the START of consecutive batches, which is what pins the
+    # episode's request rate under the sidecar's per-episode cap.
+    check provider.batches[1].startMs - provider.batches[0].startMs >= 250
+
+  test "a HUNG provider still hands the turn back inside turnBudgetMs":
+    var game = seatedSim(testConfig())
+    game.phase = Playing
+    game.config.turnBudgetMs = 300
+    var engine = llmEngine(game)
+    # Answers, but far too late to be worth a retry.
+    let provider = newFakeProvider(
+      @[anthropicBody("I am thinking about it")], delayMs = 500)
+    engine.client = fakeClient(provider)
+    let started = epochTime()
+    let records = engine.turn(game, 0, 0)
+    let elapsed = epochTime() - started
+    check provider.batches.len == 1          # the budget cancelled the retry
+    check elapsed < 2.0
+    var budgetTimeouts = 0
+    for record in records:
+      let node = parseJson(record)
+      if node["k"].getStr() == "fallback" and
+          node["cause"].getStr() == "timeout":
+        check "budget" in node["detail"].getStr()
+        inc budgetTimeouts
+    check budgetTimeouts == 20
+    for seat in 0 ..< 20:
+      check engine.haveScript[seat]
+      check validScript(engine.scripts[seat])
+
+  test "a parse failure retries EXACTLY once, and the retry is one batch too":
+    var game = seatedSim(testConfig())
+    game.phase = Playing
+    var engine = llmEngine(game)
+    let provider = newFakeProvider(@[
+      anthropicBody("I am sorry, I cannot help with that."),
+      anthropicBody(GoodScript)])
+    engine.client = fakeClient(provider)
+    let records = engine.turn(game, 0, 0)
+    check provider.batches.len == 2
+    check provider.batches[1].size == 20
+    for seat in 0 ..< 20:
+      check engine.scripts[seat].source == srcLlm
+    var attempts: seq[int]
+    for record in records:
+      let node = parseJson(record)
+      if node["k"].getStr() == "fallback":
+        attempts.add(node["attempt"].getInt)
+    for attempt in attempts:
+      check attempt == 1                     # the first try, and no other
+
+  test "a reply that never parses falls back after the SECOND batch, not the third":
+    var game = seatedSim(testConfig())
+    game.phase = Playing
+    var engine = llmEngine(game)
+    let provider = newFakeProvider(@[anthropicBody("no object here, ever")])
+    engine.client = fakeClient(provider)
+    let records = engine.turn(game, 0, 0)
+    check provider.batches.len == 2
+    var finals: seq[int]
+    for record in records:
+      let node = parseJson(record)
+      if node["k"].getStr() == "fallback" and node["attempt"].getInt == 2:
+        check node["cause"].getStr() == "parse_error"
+        if node["seat"].getInt notin finals:
+          finals.add(node["seat"].getInt)
+    check finals.len == 20
+    for seat in 0 ..< 20:
+      check engine.scripts[seat].source == srcFallback
+      check validScript(engine.scripts[seat])
+
+  test "a THROTTLED provider skips the retry entirely":
+    var game = seatedSim(testConfig())
+    game.phase = Playing
+    var engine = llmEngine(game)
+    let provider = newFakeProvider(@["{\"message\":\"slow down\"}"], code = 429)
+    engine.client = fakeClient(provider)
+    let records = engine.turn(game, 0, 0)
+    # One batch, no second: the only candidate model answered 429, so a retry
+    # inside the same turn cannot land and would burn the whole turn budget.
+    check provider.batches.len == 1
+    check engine.client.throttled
+    var throttled = 0
+    for record in records:
+      let node = parseJson(record)
+      if node["k"].getStr() == "fallback" and
+          node["cause"].getStr() == "throttled":
+        inc throttled
+    check throttled >= 20
+    for seat in 0 ..< 20:
+      check engine.scripts[seat].source == srcFallback
 
   test "a seat with a script keeps it; a seat without one plays wavebot":
     var game = seatedSim(testConfig())

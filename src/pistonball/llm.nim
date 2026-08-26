@@ -46,6 +46,16 @@ type
     model*: string
     maxOutputTokens*: int
     disabled*: bool
+    sendBatch*: proc(batch: RequestBatch, timeoutSeconds: int): ResponseBatch
+      {.gcsafe, raises: [].}
+      ## The ONE call that leaves the process, behind a seam. `nil` in every
+      ## build the server runs: `newLlmClient` never sets it and `sendTurnBatch`
+      ## falls through to `curl.makeRequests`. It exists because the turn loop's
+      ## contract — twenty seats in ONE batch, one retry and no more, a batch
+      ## the throttle cancels, a hung provider that still hands the turn back
+      ## inside `turnBudgetMs` — is not observable from outside the process, and
+      ## a test that cannot fake the provider can only assert that a
+      ## credential-less client does nothing.
     throttled*: bool
       ## The provider answered 429 and there is no other candidate model to
       ## rotate to. Set per turn, cleared by the turn loop: retrying inside
@@ -157,6 +167,15 @@ proc requestFor*(
     result.url = AnthropicUrl
   result.headers = headers
   result.body = $body
+
+proc sendTurnBatch*(
+  client: LlmClient, batch: RequestBatch, timeoutSeconds: int
+): ResponseBatch =
+  ## Issue one turn's whole batch and block until every request has answered
+  ## or failed. `curly.makeRequests` unless a `sendBatch` seam is installed.
+  if client.sendBatch != nil:
+    return client.sendBatch(batch, timeoutSeconds)
+  client.curl.makeRequests(batch, timeoutSeconds)
 
 proc textOf*(
   client: LlmClient, response: Response, error, url: string
