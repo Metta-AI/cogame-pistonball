@@ -107,6 +107,10 @@ suite "the manifest":
       "static-replay-viewer"
     check not manifest.hasKey("version")
     check not manifest["game"].hasKey("display_name")
+    # The platform validator requires game.description and forbids game.tags;
+    # tags live at the top level only (release 0.1.0, run 32929871659).
+    check manifest["game"]["description"].getStr().len > 200
+    check not manifest["game"].hasKey("tags")
     check manifest["tags"].len >= 3
     check manifest["episode_timeout_minutes"].getInt == 20
     check manifest["game"]["runnable"]["image"].getStr() == "{{PISTONBALL_IMAGE}}"

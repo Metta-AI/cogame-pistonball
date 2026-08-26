@@ -10,6 +10,7 @@
   ],
   "game": {
     "name": "pistonball",
+    "description": "Pistonball: twenty LLM-piloted pistons and one ball. The pistons stand shoulder to shoulder in a bank across the floor of a long, shallow box; the ball is dropped against the right wall and rolls down whatever slope the bank happens to be making under it. Get it to the left wall. The catch is sight: a piston sees only one metre either side of itself, so for most of the run nobody can see the ball at all - you steer from your last sighting, your two visible neighbours' heights, and a single shared number saying whether the bank as a whole gained ground. A travelling wave is the only thing that works and no seat can see the whole wave. Fully cooperative: every seat scores the same, progress toward the goal wall minus a per-tick penalty, so speed is the only tiebreak. Seat-to-piston assignment is reshuffled every episode, so a policy cannot memorise a position.",
     "owner": "daveey",
     "runnable": {
       "type": "game",
@@ -388,14 +389,7 @@
           }
         }
       ]
-    },
-    "tags": [
-      "physics",
-      "cooperative",
-      "local-observation",
-      "swarm",
-      "llm"
-    ]
+    }
   },
   "player": [
     {
