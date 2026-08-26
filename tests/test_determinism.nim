@@ -21,10 +21,15 @@ proc mutated_tick(length: int): int =
 
 suite "determinism":
   test "the same seed and command log reproduce the hash chain, twice":
-    let recorded = runScriptedRecording(4417231, [blWavebot])
+    # METRONOME, so this is a FULL 1800-tick chain: twenty wavebots deliver in
+    # about 120 ticks, and a 120-tick chain says nothing about the 1680 ticks
+    # after it (design.md:1336-1338 asks for "a full 1800-tick run").
+    let recorded = runScriptedRecording(4417231, [blMetronome])
     let first = replayCommandLog(4417231, recorded.commandLog)
     let second = replayCommandLog(4417231, recorded.commandLog)
+    check recorded.game.tickCount == 1800
     check first.len == recorded.commandLog.len
+    check first.len == 1800
     check first == second
 
   test "a one-unit change in any command byte changes the final hash":
