@@ -2,27 +2,41 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>pistonball renderer fixture — full-cap text at 360 / 620 / 1280 px</title>
+<title>pistonball speech-plate fixture — full-cap text at 360 / 620 / 1280 px</title>
 <!--
-  THE FULL-CAP TEXT FIXTURE.
+  THE FULL-CAP TEXT FIXTURE, and an honest statement of what it covers.
 
-  `tools/ci/docker_smoke.sh` runs with no ANTHROPIC_API_KEY, so every seat of
-  the smoke episode plays scripted and the replay it produces carries only the
-  baselines' short, fixed `say` strings. Nothing in CI would otherwise exercise
-  the reserved speech band or the match feed AT FULL CAP — which is exactly
-  where a caption with nowhere to go hides (cogchemists, 2026-08-24: four
-  speech bubbles drawn at a negative y and clipped to slivers, invisible to the
-  load signal and to the screenshot).
+  WHERE MODEL TEXT ACTUALLY GOES. A seat's `say` reaches a spectator through
+  exactly one drawing path: `bakeBubble` in src/pistonball/global.nim bakes it
+  into a speech plate with pixie and data/font.ttf at size 20, and the wasm
+  build blits that plate as a Sprite v1 sprite. A seat's `note` reaches the
+  chrome as DOM (`pbFeed` writes a `.feed-row` element). NEITHER is a 2D-canvas
+  fillText, which is why the BUNDLE run of viewer_smoke.mjs reports
+  `canvas text: 0 drawn` — that number covers nothing here and is not evidence
+  of anything, exactly as the review said.
 
-  So this page draws the real board geometry at 360, 620 and 1280 CSS pixels
-  with a full-cap 48-rune `say` and a full-cap 160-rune `note` on ALL TWENTY
-  seats at once, into the SAME reserved band the renderer uses
-  (Y in [3.55, 4.25] m of a 9.6 x 4.8 m arena), and self-checks its own string
-  lengths before it declares itself loaded.
+  So the text is gated in two places, and this page is one of them:
 
-  It is run through `tools/ci/viewer_smoke.mjs --strict-text-bounds`, which
-  hooks CanvasRenderingContext2D.fillText and fails the job when a string never
-  once landed inside its canvas.
+  1. tests/test_render.nim bakes full-cap strings through the PRODUCTION
+     `bakeBubble` and measures the pixels it produced — the glyphs are there,
+     they are inside the plate, the plate is inside the reserved band and
+     inside the board. That is the authority on the wasm path.
+
+  2. This page reproduces the production plate geometry in the browser with the
+     PRODUCTION FACE (data/font.ttf, fetched as bytes and installed with the
+     FontFace API) at the production size, at three embed widths, and refuses
+     to declare itself loaded unless every full-cap line still fits: 48-rune
+     `say` on all twenty seats, plus the 160-rune `note` in a real DOM feed
+     row. It is run through `viewer_smoke.mjs --strict-text-bounds`, which
+     hooks CanvasRenderingContext2D.fillText and fails the job when a string
+     never once landed inside its canvas.
+
+  What this page is NOT: it is not the wasm renderer, and it does not claim to
+  be. It is the same arithmetic in the same face at three widths, which is what
+  a browser can check; the pixels themselves are checked in Nim.
+
+  (cogchemists, 2026-08-24: four speech bubbles drawn at a negative y and
+  clipped to slivers, invisible to the load signal and to the screenshot.)
 -->
 <style>
   html, body {
@@ -42,6 +56,15 @@
   }
   canvas { display: block; background: #1d1a16; }
   #status { padding: 8px; font-size: 12px; }
+  /* The feed row is the chrome's shape: a bounded column that wraps rather
+     than running off the frame. */
+  #feed {
+    width: 360px;
+    padding: 6px 8px;
+    font-size: 12px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
 </style>
 </head>
 <body>
@@ -56,6 +79,19 @@
 // --- the caps, verbatim from the reply schema -----------------------------
 var MAX_SAY_RUNES = 48;
 var MAX_NOTE_RUNES = 160;
+
+// --- the renderer's own constants, from src/pistonball/global.nim ---------
+var MAP_W = 1200, MAP_H = 600;        // board pixels; 1 board px = 8000 um
+var LEFT_WALL_PX = 100, RIGHT_WALL_PX = 1100, PISTON_PX = 50, FLOOR_ROW = 550;
+var BAND_TOP = 19, BAND_BOTTOM = 106; // the RESERVED speech band, board rows
+var PLATE_H = 34;
+var MAX_BUBBLES = 3;
+var SLOT_STRIDE = Math.floor((BAND_BOTTOM - BAND_TOP - PLATE_H) / (MAX_BUBBLES - 1));
+var PLATE_FONT_PX = 20;               // font.size = 20 in bakeBubble
+var PLATE_PAD_X = 26;                 // ceil(advance) + 26
+var PLATE_TEXT_X = 12, PLATE_TEXT_Y = 5;
+var PLATE_MAX_W = MAP_W - 40;         // the width formula's clamp
+var PISTONS = 20;
 
 function runeLen(text) { return Array.from(text).length; }
 
@@ -72,15 +108,37 @@ function padToRunes(seed, runes) {
 }
 
 var SAY = padToRunes('up behind it — lifting now ', MAX_SAY_RUNES);
+var WIDEST = 'W'.repeat(MAX_SAY_RUNES);   // the widest legal 48 runes
 var NOTE = padToRunes(
   'ball came through low and fast on my right; lifting earlier next turn and ' +
   'dropping the moment it passes so the runway ahead stays flat ', MAX_NOTE_RUNES);
 
-// --- board geometry, from the design note ---------------------------------
-var ARENA_W = 9.6, ARENA_H = 4.8;
-var FLOOR_Y = 4.4;                 // metres of headroom above the floor line
-var BAND_TOP = 4.25, BAND_BOTTOM = 3.55;   // the RESERVED speech band
-var PISTONS = 20;
+// bakeBubble's own width formula, transcribed.
+function plateWidth(ctx, text) {
+  var advance = Math.ceil(ctx.measureText(text).width);
+  return Math.min(PLATE_MAX_W, Math.max(60, advance + PLATE_PAD_X));
+}
+
+// bubblePlateX(), transcribed: centred over the head, then slid inside the
+// walls. Never positioned relative to the head's HEIGHT.
+function plateX(piston, width) {
+  var x = LEFT_WALL_PX + piston * PISTON_PX + Math.floor(PISTON_PX / 2) -
+    Math.floor(width / 2);
+  if (x < LEFT_WALL_PX + 4) x = LEFT_WALL_PX + 4;
+  if (x + width > RIGHT_WALL_PX - 4) x = RIGHT_WALL_PX - 4 - width;
+  return x;
+}
+
+var metricsCtx = null;
+function boardMetrics() {
+  // One offscreen context, held at the plate's own font size, so the width
+  // formula is evaluated in BOARD pixels no matter which panel is drawing.
+  if (metricsCtx === null) {
+    metricsCtx = document.createElement('canvas').getContext('2d');
+    metricsCtx.font = PLATE_FONT_PX + 'px pistonboard';
+  }
+  return metricsCtx;
+}
 
 function drawPanel(cssWidth) {
   var wrap = document.createElement('div');
@@ -88,11 +146,11 @@ function drawPanel(cssWidth) {
   var cap = document.createElement('div');
   cap.className = 'cap';
   cap.textContent = cssWidth + ' px — full-cap say (' + MAX_SAY_RUNES +
-    ' runes) and note (' + MAX_NOTE_RUNES + ' runes) on all 20 seats';
+    ' runes) on all 20 seats, in the shipped face at the shipped plate size';
   wrap.appendChild(cap);
 
   var canvas = document.createElement('canvas');
-  var cssHeight = Math.round(cssWidth * (ARENA_H / ARENA_W));
+  var cssHeight = Math.round(cssWidth * (MAP_H / MAP_W));
   var dpr = window.devicePixelRatio || 1;
   canvas.style.width = cssWidth + 'px';
   canvas.style.height = cssHeight + 'px';
@@ -101,82 +159,76 @@ function drawPanel(cssWidth) {
   wrap.appendChild(canvas);
   document.getElementById('panels').appendChild(wrap);
 
+  // Board pixels scale into CSS pixels exactly as the 1200x600 board scales
+  // into an embed. The GEOMETRY is computed in board units (that is where the
+  // renderer's formulas live) and DRAWN in CSS units, so every fillText the
+  // smoke measures carries its true on-screen box.
+  var scale = cssWidth / MAP_W;
   var ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
-  var px = cssWidth / ARENA_W;              // CSS px per metre
-  var hudscale = Math.max(0.5, Math.min(1.6, cssWidth / 760));
+  var b = function (value) { return value * scale; };
 
   // floor + housing
   ctx.fillStyle = '#211d18';
-  ctx.fillRect(0, (FLOOR_Y / ARENA_H) * cssHeight, cssWidth, cssHeight);
+  ctx.fillRect(0, b(FLOOR_ROW), cssWidth, b(MAP_H - FLOOR_ROW));
   ctx.fillStyle = '#3b342b';
-  ctx.fillRect(0, (FLOOR_Y / ARENA_H) * cssHeight - 1, cssWidth, 2);
+  ctx.fillRect(0, b(FLOOR_ROW) - 1, cssWidth, 2);
 
-  // twenty heads at assorted heights
+  // twenty heads at assorted extensions
   for (var i = 0; i < PISTONS; i++) {
-    var h = 0.1 + 1.4 * Math.abs(Math.sin(i * 0.7));
-    var x = (0.8 + 0.4 * i) * px;
-    var top = ((FLOOR_Y - h) / ARENA_H) * cssHeight;
+    var h = (0.1 + 1.4 * Math.abs(Math.sin(i * 0.7))) * 125;   // 125 px per m
+    var x = LEFT_WALL_PX + i * PISTON_PX;
     ctx.fillStyle = i % 3 === 0 ? '#c4604e' : '#7c8089';
-    ctx.fillRect(x, top, 0.4 * px, ((FLOOR_Y / ARENA_H) * cssHeight) - top);
+    ctx.fillRect(b(x), b(FLOOR_ROW - h), b(PISTON_PX), b(h));
   }
 
-  // The RESERVED speech band. Every string is drawn INSIDE it, never relative
-  // to a piston head, and the band is sized from the cap so a full-cap line
-  // always fits.
-  var bandTopPx = ((ARENA_H - BAND_TOP) / ARENA_H) * cssHeight;
-  var bandBottomPx = ((ARENA_H - BAND_BOTTOM) / ARENA_H) * cssHeight;
-  var bandH = bandBottomPx - bandTopPx;
+  // the RESERVED band
   ctx.fillStyle = 'rgba(10, 8, 6, 0.55)';
-  ctx.fillRect(0, bandTopPx, cssWidth, bandH);
+  ctx.fillRect(0, b(BAND_TOP), cssWidth, b(BAND_BOTTOM - BAND_TOP));
 
-  // At most three bubbles are ever drawn at once (the three pistons nearest
-  // the ball), but the fixture proves every one of the twenty seats' lines
-  // fits: it draws them in turn, all inside the band.
-  var fontPx = Math.max(9, Math.round(11 * hudscale));
+  // At most three plates are ever on screen at once (the three pistons nearest
+  // the ball), but every one of the twenty seats' lines must fit, so the
+  // fixture draws all twenty through the production geometry, cycling the
+  // three production slots.
   ctx.textBaseline = 'top';
   ctx.textAlign = 'left';
-  var lines = 0;
   for (var seat = 0; seat < PISTONS; seat++) {
-    var text = 'PST-' + (seat < 9 ? '0' : '') + (seat + 1) + ': ' + SAY;
-    ctx.font = fontPx + 'px system-ui, sans-serif';
-    var w = ctx.measureText(text).width;
-    var scale = Math.min(1, (cssWidth - 8) / Math.max(1, w));
-    if (scale < 1) {
-      ctx.font = Math.max(7, Math.floor(fontPx * scale)) + 'px system-ui, sans-serif';
-      w = ctx.measureText(text).width;
+    var text = (seat % 4 === 0 ? WIDEST : 'PST-' + (seat < 9 ? '0' : '') +
+      (seat + 1) + ': ' + SAY);
+    // Measured at the PLATE's own size, in board pixels: that is the size the
+    // renderer bakes at, whatever the embed is scaled to.
+    var w = plateWidth(boardMetrics(), text);
+    var advance = Math.ceil(boardMetrics().measureText(text).width);
+    if (w >= PLATE_MAX_W) {
+      throw new Error('seat ' + seat + ': plate hit the ' + PLATE_MAX_W +
+        ' px clamp (advance ' + advance + ') — pixie would clip the caption');
     }
-    var x2 = Math.max(4, Math.min(cssWidth - w - 4, 4));
-    var y2 = bandTopPx + 2 + (lines % Math.max(1, Math.floor(bandH / (fontPx + 2)))) * (fontPx + 2);
+    if (PLATE_TEXT_X + advance > w - 2) {
+      throw new Error('seat ' + seat + ': text runs past the plate (' +
+        advance + ' px of glyphs in a ' + w + ' px plate)');
+    }
+    var slot = seat % MAX_BUBBLES;
+    var px = plateX(seat, w);
+    var py = BAND_TOP + slot * SLOT_STRIDE;
+    if (px < 0 || px + w > MAP_W) {
+      throw new Error('seat ' + seat + ': plate leaves the board at x ' + px);
+    }
+    if (py < BAND_TOP || py + PLATE_H > BAND_BOTTOM) {
+      throw new Error('seat ' + seat + ': plate leaves the reserved band at y ' + py);
+    }
+    ctx.fillStyle = 'rgba(18, 16, 14, 0.8)';
+    ctx.fillRect(b(px), b(py), b(w), b(PLATE_H));
+    ctx.strokeStyle = 'rgba(232, 224, 206, 0.82)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(b(px) + 0.5, b(py) + 0.5, b(w) - 1, b(PLATE_H) - 1);
     ctx.fillStyle = '#f2e8d8';
-    ctx.fillText(text, x2, y2);
-    lines++;
-  }
-
-  // The match feed's own full-cap line, wrapped inside the frame.
-  ctx.font = Math.max(8, Math.round(10 * hudscale)) + 'px system-ui, sans-serif';
-  var words = NOTE.split(' ');
-  var row = '';
-  var feedY = bandBottomPx + 4;
-  for (var wi = 0; wi < words.length; wi++) {
-    var attempt = row.length ? row + ' ' + words[wi] : words[wi];
-    if (ctx.measureText(attempt).width > cssWidth - 8 && row.length) {
-      ctx.fillStyle = '#d8cfbe';
-      ctx.fillText(row, 4, feedY);
-      feedY += Math.max(9, Math.round(11 * hudscale));
-      row = words[wi];
-    } else {
-      row = attempt;
-    }
-  }
-  if (row.length) {
-    ctx.fillStyle = '#d8cfbe';
-    ctx.fillText(row, 4, feedY);
+    ctx.font = (PLATE_FONT_PX * scale) + 'px pistonboard';
+    ctx.fillText(text, b(px + PLATE_TEXT_X), b(py + PLATE_TEXT_Y));
   }
   return canvas;
 }
 
-try {
+function build() {
   // Self-check the caps FIRST: a fixture that silently drew a short string
   // would prove nothing at all.
   if (runeLen(SAY) !== MAX_SAY_RUNES) {
@@ -185,20 +237,51 @@ try {
   if (runeLen(NOTE) !== MAX_NOTE_RUNES) {
     throw new Error('note is ' + runeLen(NOTE) + ' runes, expected ' + MAX_NOTE_RUNES);
   }
+  if (!document.fonts.check(PLATE_FONT_PX + 'px pistonboard')) {
+    throw new Error('data/font.ttf did not install: the measurements below ' +
+      'would be some other face and would prove nothing');
+  }
   drawPanel(360);
   drawPanel(620);
   drawPanel(1280);
+
+  // The `note` never reaches a canvas in production — it is a DOM feed row —
+  // so check it as one: a bounded column that WRAPS rather than running off
+  // the frame at the 360 px embed width.
+  var feed = document.getElementById('feed');
+  feed.textContent = 'PST-07: ' + NOTE;
+  if (feed.scrollWidth > feed.clientWidth + 1) {
+    throw new Error('the full-cap note overflows a 360 px feed column by ' +
+      (feed.scrollWidth - feed.clientWidth) + ' px');
+  }
+
   document.getElementById('status').textContent =
-    'full-cap text drawn at 360 / 620 / 1280 px — say ' + runeLen(SAY) +
-    ' runes, note ' + runeLen(NOTE) + ' runes';
-  document.getElementById('feed').textContent = NOTE;
+    'full-cap text drawn at 360 / 620 / 1280 px in the shipped face — say ' +
+    runeLen(SAY) + ' runes, note ' + runeLen(NOTE) + ' runes';
   requestAnimationFrame(function () {
     document.documentElement.setAttribute('data-replay-loaded', 'true');
   });
-} catch (error) {
-  document.getElementById('status').textContent = 'FAILED: ' + error.message;
-  document.documentElement.setAttribute('data-replay-error', error.message);
 }
+
+// The production FACE, fetched as bytes rather than by url() so no content-type
+// guess sits between the fixture and the file the renderer bakes with.
+fetch('font.ttf')
+  .then(function (response) {
+    if (!response.ok) throw new Error('font.ttf: HTTP ' + response.status);
+    return response.arrayBuffer();
+  })
+  .then(function (bytes) {
+    var face = new FontFace('pistonboard', bytes);
+    return face.load();
+  })
+  .then(function (face) {
+    document.fonts.add(face);
+    build();
+  })
+  .catch(function (error) {
+    document.getElementById('status').textContent = 'FAILED: ' + error.message;
+    document.documentElement.setAttribute('data-replay-error', error.message);
+  });
 </script>
 </body>
 </html>

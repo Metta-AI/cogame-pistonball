@@ -33,6 +33,13 @@ const
   BubbleBandBottom* = 106       ## Y in [3.55, 4.25] m. Bubbles NEVER sit
                                 ## relative to a piston head.
   MaxBubbles* = 3
+  BubblePlateHeight* = 34       ## every speech plate, whatever its text.
+  BubbleSlotStride* = (BubbleBandBottom - BubbleBandTop - BubblePlateHeight) div
+    (MaxBubbles - 1)
+    ## Slot pitch, derived so the LAST plate's BOTTOM edge lands on the band's
+    ## bottom rather than 5 rows past it: three 34-row plates do not fit inside
+    ## an 87-row band at a pitch of band/3, and "the band is reserved" has to be
+    ## true of the plates, not of their top-left corners.
 
   ## --- sprite ids ---------------------------------------------------------
   BandSpriteBase* = 100
@@ -366,7 +373,21 @@ proc bakeDot(size: int, r, g, b: uint8, peak: float): seq[uint8] =
         image.put(x, y, r, g, b, uint8(255.0 * peak * (1.0 - d)))
   straightRgba(image)
 
-proc bakeBubble(text: string): tuple[width, height: int, pixels: seq[uint8]] =
+proc bubbleSlotY*(slot: int): int =
+  ## The top row of speech slot `slot`. Every plate, top edge to bottom edge,
+  ## lies inside [BubbleBandTop, BubbleBandBottom].
+  BubbleBandTop + slot * BubbleSlotStride
+
+proc bubblePlateX*(piston, width: int): int =
+  ## The left column of a plate spoken by `piston`: centred over its head, then
+  ## slid inside the walls. Never positioned relative to the head's HEIGHT.
+  result = LeftWallPx + piston * PistonPx + PistonPx div 2 - width div 2
+  if result < LeftWallPx + 4:
+    result = LeftWallPx + 4
+  if result + width > RightWallPx - 4:
+    result = RightWallPx - 4 - width
+
+proc bakeBubble*(text: string): tuple[width, height: int, pixels: seq[uint8]] =
   ## A speech plate sized from the text, drawn in the shipped face. The band
   ## it lives in is reserved (see `BubbleBandTop`), so a full-cap 48-rune line
   ## can never be drawn outside the frame.
@@ -379,7 +400,7 @@ proc bakeBubble(text: string): tuple[width, height: int, pixels: seq[uint8]] =
   let
     bounds = font.layoutBounds(text)
     width = min(MapWidth - 40, max(60, int(ceil(bounds.x)) + 26))
-    height = 34
+    height = BubblePlateHeight
   var image = newImage(width, height)
   for y in 0 ..< height:
     for x in 0 ..< width:
@@ -723,11 +744,9 @@ proc buildBoardPacket*(
         nextState.spriteDefs.delete(index)
     result.defineSprite(nextState.spriteDefs, spriteId, baked.width,
       baked.height, baked.pixels)
-    var x = LeftWallPx + bubbles[slot].piston * PistonPx +
-      PistonPx div 2 - baked.width div 2
-    if x < LeftWallPx + 4: x = LeftWallPx + 4
-    if x + baked.width > RightWallPx - 4: x = RightWallPx - 4 - baked.width
-    let y = BubbleBandTop + slot * ((BubbleBandBottom - BubbleBandTop) div 3)
+    let
+      x = bubblePlateX(bubbles[slot].piston, baked.width)
+      y = bubbleSlotY(slot)
     result.addObject(BubbleObjectBase + slot, x, y, 120, MapLayerId, spriteId)
     ids.add(BubbleObjectBase + slot)
   for objectId in state.objectIds:

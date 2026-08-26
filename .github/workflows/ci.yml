@@ -324,15 +324,29 @@ jobs:
             --soak 12 \
             --strict-text-bounds
 
-      # docker_smoke.sh runs with NO ANTHROPIC_API_KEY, so every seat plays
-      # scripted and the smoke replay carries only the baselines' fixed `say`
-      # strings. Nothing in CI would otherwise exercise the reserved speech
-      # band or the feed at FULL CAP, which is exactly where a caption with
-      # nowhere to go hides (cogchemists, 2026-08-24). The fixture loads the
-      # real renderer with a full-cap 48-rune `say` and 160-rune `note` on all
-      # twenty seats at once, at 360, 620 and 1280 px, and self-checks its own
-      # string lengths.
-      - name: Full-cap renderer fixture at 360 / 620 / 1280 px
+      # WHERE THE MODEL TEXT IS, and what checks it.
+      #
+      # A `say` is baked into a speech plate by `bakeBubble`
+      # (src/pistonball/global.nim, pixie + data/font.ttf at size 20) and
+      # blitted as a sprite by the wasm build; a `note` is a DOM `.feed-row`.
+      # Neither is a 2D-canvas fillText, so the BUNDLE run above reports
+      # `canvas text: 0 drawn` -- that total covers nothing here and is not
+      # evidence of anything. The plate pixels are gated in Nim instead, by
+      # tests/test_render.nim in the `test` job, which bakes full-cap strings
+      # through the production proc and asserts the glyphs are drawn, are
+      # inside the plate, and the plate is inside the reserved band.
+      #
+      # This step is the browser half: the fixture reproduces the production
+      # plate geometry in the PRODUCTION FACE (font.ttf, installed with the
+      # FontFace API) at three embed widths with a full-cap 48-rune `say` on
+      # all twenty seats and the 160-rune `note` in a real feed column, and
+      # refuses to signal loaded unless every line still fits. It does not
+      # load the wasm renderer and does not claim to.
+      # docker_smoke.sh runs with NO ANTHROPIC_API_KEY, so the smoke replay
+      # carries only the baselines' short fixed `say` strings and nothing in CI
+      # would otherwise see a full-cap line at all -- which is exactly where a
+      # caption with nowhere to go hides (cogchemists, 2026-08-24).
+      - name: Full-cap speech-plate fixture at 360 / 620 / 1280 px
         run: |
           set -euo pipefail
           test -s tools/ci/renderer_fixture.html || {
