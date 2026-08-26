@@ -67,19 +67,35 @@ const
   GravityPerSubstep* = 1_064'i32   ## um/tick per substep (9.81 m/s^2 at 384 Hz).
 
   ## --- contact solver -----------------------------------------------------
+  ## PER-SUBSTEP coefficients, on the 384 Hz substep clock (`SubSteps = 16`).
+  ## Only `GravityPerSubstep` was rescaled when the substep count went 4 -> 16,
+  ## because gravity is the one quantity whose per-TICK value is fixed by
+  ## physics. The three coefficients below kept the design note's 96 Hz
+  ## numbers, so per TICK they are about four times the note's: the torque
+  ## gain behaves like a rotational inertia of ~120 rather than
+  ## `BallInertia = 480`, and a tick of air drag is `(1 - 8/4096)^16 = 0.969`
+  ## rather than `^4 = 0.992`. That is deliberate and it is LOAD-BEARING, not
+  ## an oversight left in place: the whole tuning was measured against these
+  ## values, and dividing them by four (28_294 -> 7_074, 8 -> 2, 12 -> 3, which
+  ## is the exact per-tick rescale) makes the ball so much livelier that the
+  ## certification fixture's nineteen metronomes DELIVER — 4 of 24 seeds
+  ## measured, one in 53 ticks — and a fixture that short is the frozen-replay
+  ## failure the metronome fleet exists to avoid (`844697a`). Treat the four
+  ## numbers as one tuned set: changing any of them re-tunes the game and
+  ## invalidates `tests/data/golden_hashes.json`.
   ContactStiffness* = 150'i64      ## mN per um of penetration.
   ContactDamping* = 28'i64         ## mN per (um/tick) of approach.
   MaxNormalForce* = 60_000_000'i64 ## mN.
   FrictionNum* = 614'i64           ## Coulomb mu = 0.60 in 1/1024ths.
   FrictionDen* = 1024'i64
   FrictionViscous* = 150'i64       ## mN per (um/tick) of tangential slip.
-  AirDragNum* = 8'i64
+  AirDragNum* = 8'i64              ## per SUBSTEP; 16 of them per tick.
   AirDragDen* = 4096'i64
-  SpinDragNum* = 12'i64
+  SpinDragNum* = 12'i64            ## per SUBSTEP; 16 of them per tick.
   SpinDragDen* = 4096'i64
   MaxBallSpeed* = 250_000'i32      ## um/tick (6.0 m/s).
   MaxBallSpin* = 300'i32           ## 1/16 brad per tick.
-  TorqueScale* = 28_294'i64        ## mN*m -> 1/16 brad per tick per substep.
+  TorqueScale* = 28_294'i64        ## mN*m -> 1/16 brad per tick, PER SUBSTEP.
   TorqueDen* = 100_000'i64
 
   ## --- containment guard --------------------------------------------------

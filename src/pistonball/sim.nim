@@ -317,10 +317,14 @@ proc substep(sim: var SimServer) =
   sim.ballVy = int32(vy)
   sim.spin = int32(spin)
 
-  # 4. pose.
+  # 4. pose. Both integrations divide by SubSteps, never by a literal: `spin`
+  # is 1/16 brad PER TICK (that is the unit the rolling relation
+  # `spin = -vx * 652 / R` is written in), so the drawn angle must advance by
+  # exactly `spin` over the whole tick, whatever the substep count is.
   sim.ballX += sim.ballVx div int32(SubSteps)
   sim.ballY += sim.ballVy div int32(SubSteps)
-  sim.angleQ = int32(((int64(sim.angleQ) + int64(sim.spin) div 4 + 4096) mod 4096))
+  sim.angleQ = int32(
+    (int64(sim.angleQ) + int64(sim.spin) div int64(SubSteps) + 4096) mod 4096)
 
   # 5. containment guard.
   var clamped = false
