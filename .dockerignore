@@ -1,0 +1,7 @@
+.git
+.github
+dist
+replay-viewer/dist
+nimcache
+nim.cfg
+tmp

@@ -1,0 +1,35 @@
+[
+  {
+    "name": "pistonball-swell",
+    "run": "/bin/pistonball-player",
+    "env": {
+      "PLAYER_PROMPT": "Be the shoulder the ball rolls off. Run mode \"wave\" every turn: it is the only\nmode that both lifts behind the ball and clears the way in front of it, and the\nbank only works if most pistons are running it. Set trigger_m to 1.0 so you\ncommit the moment the ball enters your window - a narrower trigger means you\nstart moving after it is already on top of you and your head arrives late. Set\nlead_ticks to 6: at a typical 2 m/s the ball covers half a piston width in six\nticks, so this is what puts your head where the ball is GOING instead of where\nit was. Run up_m 1.45, down_m 0.05 and speed 1.0 - the steepest slope you can\nmake is the fastest the ball will roll, and a half-raised piston is just a bump\nthat stops it. Set idle_m to 0.25 and blind to \"idle\", so that when the ball is\nnowhere near you your head is low and level with your neighbours instead of\nfrozen at whatever height your last sighting left it: a stranded raised piston\nfive columns ahead is a wall the whole bank then has to fight. The one time to\nchange anything: if your sightings show the ball moving RIGHT (positive vx) or\nyou saw it and then saw it again going the other way, switch to \"catch\" with\nup_m 1.6 for one turn - stopping a runaway is worth more than helping a wave\nthat is going backwards.",
+      "PLAYER_POLICY_LABEL": "swell"
+    }
+  },
+  {
+    "name": "pistonball-cascade",
+    "run": "/bin/pistonball-player",
+    "player": "ply_bac48eb1-662e-44f8-973d-f3e016dccf5d",
+    "env": {
+      "PLAYER_PROMPT": "Play your position, not the ball. Read your piston number first. If you are in\nthe right third of the bank (piston 13 or higher) you are the launcher: run\n\"wave\" with trigger_m 1.0, lead_ticks 3, up_m 1.6, down_m 0.0, speed 1.0 and\nblind \"hold\" - the ball starts at rest against the right wall and someone has to\ntip it hard, and holding your last height keeps the slope you built behind it.\nIf you are in the middle third (pistons 7 to 12) you are the conveyor: \"wave\",\nlead_ticks 8, up_m 1.2, down_m 0.1, speed 0.85, idle_m 0.2, blind \"idle\" - the\nball arrives with speed here and your job is to keep it rolling, not to launch\nit; a lower, earlier, smoother lift loses less energy to bouncing. If you are in\nthe left third (piston 6 or lower) you are the runway: \"drop\" with down_m 0.0,\nidle_m 0.0, blind \"idle\" - flat and out of the way, because anything you raise\nbetween the ball and the goal is a hill it has to climb at the end of its run.\nTwo exceptions. If your window shows the ball with vx above +0.5 (rolling back\ntoward the start) switch to \"catch\", up_m 1.6, trigger_m 1.0, whatever third you\nare in. And if shared_reward.last_turn is negative two turns running, everyone\nis fighting: drop to idle_m 0.1, speed 0.5, mode \"hold\" for one turn and let the\nball settle before the bank tries again.",
+      "PLAYER_POLICY_LABEL": "cascade"
+    }
+  },
+  {
+    "name": "pistonball-wavebot",
+    "run": "/bin/pistonball-player",
+    "env": {
+      "PLAYER_SCRIPTED": "wavebot",
+      "PLAYER_POLICY_LABEL": "wavebot"
+    }
+  },
+  {
+    "name": "pistonball-metronome",
+    "run": "/bin/pistonball-player",
+    "env": {
+      "PLAYER_SCRIPTED": "metronome",
+      "PLAYER_POLICY_LABEL": "metronome"
+    }
+  }
+]

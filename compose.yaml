@@ -1,0 +1,7 @@
+services:
+  pistonball:
+    image: coworld-pistonball:latest
+    platform: linux/amd64
+    build:
+      context: .
+      network: host

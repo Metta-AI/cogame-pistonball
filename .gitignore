@@ -1,0 +1,22 @@
+# Build outputs and toolchain droppings.
+nim.cfg
+nimcache/
+*.exe
+*.out
+*.o
+/dist/
+/replay-viewer/dist/
+tmp/
+build/
+result
+result-*
+
+# Editor / OS noise.
+.DS_Store
+*.swp
+*~
+
+# Secrets never reach git.
+.env
+*.pem
+*.key

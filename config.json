@@ -1,0 +1,33 @@
+{
+  "num_agents": 20,
+  "minPlayers": 20,
+  "maxTicks": 1800,
+  "maxGames": 1,
+  "turnTicks": 225,
+  "fastMode": true,
+  "tokens": [
+    "0xBADA55_0", "0xBADA55_1", "0xBADA55_2", "0xBADA55_3",
+    "0xBADA55_4", "0xBADA55_5", "0xBADA55_6", "0xBADA55_7",
+    "0xBADA55_8", "0xBADA55_9", "0xBADA55_10", "0xBADA55_11",
+    "0xBADA55_12", "0xBADA55_13", "0xBADA55_14", "0xBADA55_15",
+    "0xBADA55_16", "0xBADA55_17", "0xBADA55_18", "0xBADA55_19"
+  ],
+  "players": [
+    {"name": "player1"}, {"name": "player2"}, {"name": "player3"},
+    {"name": "player4"}, {"name": "player5"}, {"name": "player6"},
+    {"name": "player7"}, {"name": "player8"}, {"name": "player9"},
+    {"name": "player10"}, {"name": "player11"}, {"name": "player12"},
+    {"name": "player13"}, {"name": "player14"}, {"name": "player15"},
+    {"name": "player16"}, {"name": "player17"}, {"name": "player18"},
+    {"name": "player19"}, {"name": "player20"}
+  ],
+  "slots": [
+    {"alias": "PST-01"}, {"alias": "PST-02"}, {"alias": "PST-03"},
+    {"alias": "PST-04"}, {"alias": "PST-05"}, {"alias": "PST-06"},
+    {"alias": "PST-07"}, {"alias": "PST-08"}, {"alias": "PST-09"},
+    {"alias": "PST-10"}, {"alias": "PST-11"}, {"alias": "PST-12"},
+    {"alias": "PST-13"}, {"alias": "PST-14"}, {"alias": "PST-15"},
+    {"alias": "PST-16"}, {"alias": "PST-17"}, {"alias": "PST-18"},
+    {"alias": "PST-19"}, {"alias": "PST-20"}
+  ]
+}

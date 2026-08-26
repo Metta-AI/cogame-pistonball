@@ -1,0 +1,9 @@
+{
+  "swept": "tools/tune_baselines.nim",
+  "note": "The grid sweep's pick for the three wavebot tunables. tests/test_tuning.nim asserts the shipped DefaultBaselineParams still equal this row. The PHYSICS constants are not swept.",
+  "wavebot": {
+    "leadTicks": 6,
+    "upUm": 1450000,
+    "idleUm": 250000
+  }
+}

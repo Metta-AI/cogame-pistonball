@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>pistonball renderer fixture — full-cap text at 360 / 620 / 1280 px</title>
+<!--
+  THE FULL-CAP TEXT FIXTURE.
+
+  `tools/ci/docker_smoke.sh` runs with no ANTHROPIC_API_KEY, so every seat of
+  the smoke episode plays scripted and the replay it produces carries only the
+  baselines' short, fixed `say` strings. Nothing in CI would otherwise exercise
+  the reserved speech band or the match feed AT FULL CAP — which is exactly
+  where a caption with nowhere to go hides (cogchemists, 2026-08-24: four
+  speech bubbles drawn at a negative y and clipped to slivers, invisible to the
+  load signal and to the screenshot).
+
+  So this page draws the real board geometry at 360, 620 and 1280 CSS pixels
+  with a full-cap 48-rune `say` and a full-cap 160-rune `note` on ALL TWENTY
+  seats at once, into the SAME reserved band the renderer uses
+  (Y in [3.55, 4.25] m of a 9.6 x 4.8 m arena), and self-checks its own string
+  lengths before it declares itself loaded.
+
+  It is run through `tools/ci/viewer_smoke.mjs --strict-text-bounds`, which
+  hooks CanvasRenderingContext2D.fillText and fails the job when a string never
+  once landed inside its canvas.
+-->
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #14110d;
+    color: #f2e8d8;
+    font-family: system-ui, sans-serif;
+  }
+  .panel { padding: 8px 0 14px; }
+  .cap {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    opacity: 0.7;
+    padding: 4px 8px;
+  }
+  canvas { display: block; background: #1d1a16; }
+  #status { padding: 8px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="panels"></div>
+<div id="status">building…</div>
+<div id="clock">0:00</div>
+<div id="scorebug">THE BANK · 20 cogs</div>
+<div id="feed"></div>
+<script>
+'use strict';
+
+// --- the caps, verbatim from the reply schema -----------------------------
+var MAX_SAY_RUNES = 48;
+var MAX_NOTE_RUNES = 160;
+
+function runeLen(text) { return Array.from(text).length; }
+
+function padToRunes(seed, runes) {
+  // Build a string of EXACTLY `runes` codepoints, ending on a 4-byte emoji so
+  // the fixture also proves the caps are measured in RUNES, not bytes.
+  var out = Array.from(seed);
+  var filler = Array.from('abcdefghijklmnopqrstuvwxyz ');
+  var i = 0;
+  while (out.length < runes - 1) { out.push(filler[i % filler.length]); i++; }
+  while (out.length > runes - 1) { out.pop(); }
+  out.push('\u{1F6E0}');            // a 4-byte codepoint on the boundary
+  return out.join('');
+}
+
+var SAY = padToRunes('up behind it — lifting now ', MAX_SAY_RUNES);
+var NOTE = padToRunes(
+  'ball came through low and fast on my right; lifting earlier next turn and ' +
+  'dropping the moment it passes so the runway ahead stays flat ', MAX_NOTE_RUNES);
+
+// --- board geometry, from the design note ---------------------------------
+var ARENA_W = 9.6, ARENA_H = 4.8;
+var FLOOR_Y = 4.4;                 // metres of headroom above the floor line
+var BAND_TOP = 4.25, BAND_BOTTOM = 3.55;   // the RESERVED speech band
+var PISTONS = 20;
+
+function drawPanel(cssWidth) {
+  var wrap = document.createElement('div');
+  wrap.className = 'panel';
+  var cap = document.createElement('div');
+  cap.className = 'cap';
+  cap.textContent = cssWidth + ' px — full-cap say (' + MAX_SAY_RUNES +
+    ' runes) and note (' + MAX_NOTE_RUNES + ' runes) on all 20 seats';
+  wrap.appendChild(cap);
+
+  var canvas = document.createElement('canvas');
+  var cssHeight = Math.round(cssWidth * (ARENA_H / ARENA_W));
+  var dpr = window.devicePixelRatio || 1;
+  canvas.style.width = cssWidth + 'px';
+  canvas.style.height = cssHeight + 'px';
+  canvas.width = Math.round(cssWidth * dpr);
+  canvas.height = Math.round(cssHeight * dpr);
+  wrap.appendChild(canvas);
+  document.getElementById('panels').appendChild(wrap);
+
+  var ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  var px = cssWidth / ARENA_W;              // CSS px per metre
+  var hudscale = Math.max(0.5, Math.min(1.6, cssWidth / 760));
+
+  // floor + housing
+  ctx.fillStyle = '#211d18';
+  ctx.fillRect(0, (FLOOR_Y / ARENA_H) * cssHeight, cssWidth, cssHeight);
+  ctx.fillStyle = '#3b342b';
+  ctx.fillRect(0, (FLOOR_Y / ARENA_H) * cssHeight - 1, cssWidth, 2);
+
+  // twenty heads at assorted heights
+  for (var i = 0; i < PISTONS; i++) {
+    var h = 0.1 + 1.4 * Math.abs(Math.sin(i * 0.7));
+    var x = (0.8 + 0.4 * i) * px;
+    var top = ((FLOOR_Y - h) / ARENA_H) * cssHeight;
+    ctx.fillStyle = i % 3 === 0 ? '#c4604e' : '#7c8089';
+    ctx.fillRect(x, top, 0.4 * px, ((FLOOR_Y / ARENA_H) * cssHeight) - top);
+  }
+
+  // The RESERVED speech band. Every string is drawn INSIDE it, never relative
+  // to a piston head, and the band is sized from the cap so a full-cap line
+  // always fits.
+  var bandTopPx = ((ARENA_H - BAND_TOP) / ARENA_H) * cssHeight;
+  var bandBottomPx = ((ARENA_H - BAND_BOTTOM) / ARENA_H) * cssHeight;
+  var bandH = bandBottomPx - bandTopPx;
+  ctx.fillStyle = 'rgba(10, 8, 6, 0.55)';
+  ctx.fillRect(0, bandTopPx, cssWidth, bandH);
+
+  // At most three bubbles are ever drawn at once (the three pistons nearest
+  // the ball), but the fixture proves every one of the twenty seats' lines
+  // fits: it draws them in turn, all inside the band.
+  var fontPx = Math.max(9, Math.round(11 * hudscale));
+  ctx.textBaseline = 'top';
+  ctx.textAlign = 'left';
+  var lines = 0;
+  for (var seat = 0; seat < PISTONS; seat++) {
+    var text = 'PST-' + (seat < 9 ? '0' : '') + (seat + 1) + ': ' + SAY;
+    ctx.font = fontPx + 'px system-ui, sans-serif';
+    var w = ctx.measureText(text).width;
+    var scale = Math.min(1, (cssWidth - 8) / Math.max(1, w));
+    if (scale < 1) {
+      ctx.font = Math.max(7, Math.floor(fontPx * scale)) + 'px system-ui, sans-serif';
+      w = ctx.measureText(text).width;
+    }
+    var x2 = Math.max(4, Math.min(cssWidth - w - 4, 4));
+    var y2 = bandTopPx + 2 + (lines % Math.max(1, Math.floor(bandH / (fontPx + 2)))) * (fontPx + 2);
+    ctx.fillStyle = '#f2e8d8';
+    ctx.fillText(text, x2, y2);
+    lines++;
+  }
+
+  // The match feed's own full-cap line, wrapped inside the frame.
+  ctx.font = Math.max(8, Math.round(10 * hudscale)) + 'px system-ui, sans-serif';
+  var words = NOTE.split(' ');
+  var row = '';
+  var feedY = bandBottomPx + 4;
+  for (var wi = 0; wi < words.length; wi++) {
+    var attempt = row.length ? row + ' ' + words[wi] : words[wi];
+    if (ctx.measureText(attempt).width > cssWidth - 8 && row.length) {
+      ctx.fillStyle = '#d8cfbe';
+      ctx.fillText(row, 4, feedY);
+      feedY += Math.max(9, Math.round(11 * hudscale));
+      row = words[wi];
+    } else {
+      row = attempt;
+    }
+  }
+  if (row.length) {
+    ctx.fillStyle = '#d8cfbe';
+    ctx.fillText(row, 4, feedY);
+  }
+  return canvas;
+}
+
+try {
+  // Self-check the caps FIRST: a fixture that silently drew a short string
+  // would prove nothing at all.
+  if (runeLen(SAY) !== MAX_SAY_RUNES) {
+    throw new Error('say is ' + runeLen(SAY) + ' runes, expected ' + MAX_SAY_RUNES);
+  }
+  if (runeLen(NOTE) !== MAX_NOTE_RUNES) {
+    throw new Error('note is ' + runeLen(NOTE) + ' runes, expected ' + MAX_NOTE_RUNES);
+  }
+  drawPanel(360);
+  drawPanel(620);
+  drawPanel(1280);
+  document.getElementById('status').textContent =
+    'full-cap text drawn at 360 / 620 / 1280 px — say ' + runeLen(SAY) +
+    ' runes, note ' + runeLen(NOTE) + ' runes';
+  document.getElementById('feed').textContent = NOTE;
+  requestAnimationFrame(function () {
+    document.documentElement.setAttribute('data-replay-loaded', 'true');
+  });
+} catch (error) {
+  document.getElementById('status').textContent = 'FAILED: ' + error.message;
+  document.documentElement.setAttribute('data-replay-error', error.message);
+}
+</script>
+</body>
+</html>
