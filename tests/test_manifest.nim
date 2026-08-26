@@ -119,6 +119,11 @@ suite "the manifest":
       "secret://coworld/pistonball/anthropic_api_key"
     check manifest["player"][0]["run"][0].getStr() == "/bin/pistonball-player"
     check manifest["player"][0]["image"].getStr() == "{{PISTONBALL_IMAGE}}"
+    # The upload validator rejects a player cpu limit below one core:
+    # "player cpu limit '500m' is below the minimum of '1'" (release 0.1.1,
+    # run 32929987839).
+    for entry in manifest["player"]:
+      check entry["resources"]["limits"]["cpu"].getStr() == "1"
 
   test "BOTH protocols are objects, and every doc page is non-empty text":
     for key in ["player", "global"]:

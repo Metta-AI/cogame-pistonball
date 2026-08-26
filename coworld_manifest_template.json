@@ -408,11 +408,11 @@
       "source_url": "https://github.com/Metta-AI/cogame-pistonball/tree/main",
       "resources": {
         "requests": {
-          "cpu": "50m",
-          "memory": "48Mi"
+          "cpu": "100m",
+          "memory": "64Mi"
         },
         "limits": {
-          "cpu": "500m"
+          "cpu": "1"
         }
       }
     },
@@ -432,11 +432,11 @@
       "source_url": "https://github.com/Metta-AI/cogame-pistonball/tree/main",
       "resources": {
         "requests": {
-          "cpu": "50m",
-          "memory": "48Mi"
+          "cpu": "100m",
+          "memory": "64Mi"
         },
         "limits": {
-          "cpu": "500m"
+          "cpu": "1"
         }
       }
     }
