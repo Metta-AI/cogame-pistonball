@@ -100,12 +100,23 @@ proc canAddPlayer*(sim: SimServer): bool =
   sim.players.len < sim.config.numAgents
 
 proc progressPoints*(sim: SimServer): int64 =
-  ## Progress in milli-points. +100.000 points for the full 7.20 m.
-  sim.progressMilli
+  ## Progress in milli-points. +100.000 points for the full 7.20 m, and NEVER
+  ## negative.
+  ##
+  ## The accumulator telescopes from wherever the ball was DROPPED, and the
+  ## drop point is 2..20 cm left of the guard's right edge (`startOffsetUm`,
+  ## `bank.nim`), so a bank that shoves the ball back into the right wall ends
+  ## right of where it started and the raw sum goes as low as -2.8 points —
+  ## below the -18.000 floor the rules, the system prompt and the endcard all
+  ## promise. The clamp is applied HERE, on the way out, and never to the
+  ## accumulator itself: backsliding inside a run still costs exactly what it
+  ## gained, and a bank cannot mine the clamp by pushing the ball right and
+  ## pulling it back.
+  max(0'i64, sim.progressMilli)
 
 proc scoreMilli*(sim: SimServer): int64 =
   ## The one shared score, in milli-points: progress minus the time penalty.
-  sim.progressMilli - sim.penaltyMilli
+  sim.progressPoints() - sim.penaltyMilli
 
 proc delivered*(sim: SimServer): bool =
   sim.deliveryTick >= 0

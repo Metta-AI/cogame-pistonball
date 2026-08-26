@@ -95,3 +95,21 @@ suite "scoring":
     var game = seatedSim(testConfig())
     game.phase = Playing
     check scoreFor(BallStartX, 1800) == -18.0
+
+  test "an episode that ends RIGHT of the drop point still floors at -18.000":
+    # The ball is dropped 2..20 cm left of the guard's right edge (the seeded
+    # `startOffsetUm`), so a bank that shoves it back into the right wall ends
+    # right of where it started and the raw telescoping sum goes NEGATIVE.
+    # Reported progress is clamped at zero, which is what makes the -18.000
+    # floor the rules promise true; the accumulator itself is left signed, so
+    # backsliding inside a run still costs exactly what it gained.
+    let game = runScripted(63352, [blMetronome])
+    check game.progressMilli < 0                  # the raw sum really is
+    check game.progressPoints() == 0              # …and the report is not
+    check game.scoreMilli() >= -18_000
+    check game.scoreMilli() == -game.penaltyMilli
+    let results = parseJson(game.playerResultsJson())
+    check results["progress"].getFloat() == 0.0
+    check results["sharedScore"].getFloat() >= -18.0
+    for value in results["scores"]:
+      check value.getFloat() >= -18.0

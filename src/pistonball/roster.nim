@@ -96,7 +96,7 @@ proc playerResultsJson*(sim: SimServer): string =
     "scores": scores,
     "win": wins,
     "sharedScore": sharedScore,
-    "progress": parseFloat(pointsText(sim.progressMilli)),
+    "progress": parseFloat(pointsText(sim.progressPoints())),
     "timePenalty": parseFloat(pointsText(sim.penaltyMilli)),
     "delivered": delivered,
     "deliveryTicks": (if delivered: sim.deliveryTick else: 0),
