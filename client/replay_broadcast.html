@@ -972,7 +972,7 @@ html, body {
    PRE-LOAD CURTAIN — THE BOT LOCKER ROOM
    The wasm/replay boot can take seconds; instead of a dark board
    captioned "Warming up", the stage opens on the backstage room
-   UNDER the arena: the four cogs prepping their pistonball markers
+   UNDER the arena: the four cogs prepping their markers
    in a lamp-lit locker room. The scene is nanobanana-generated
    art (art/lockerroom/ — same warm Ink & Print world as the
    dungeon wall textures): ONE static empty-room plate (bg.jpg)
@@ -1309,7 +1309,7 @@ body[data-embed] #board { top: 0; height: 100%; }
   //
   // Loaded once; drawFpvEntity blits the matching team image scaled to the
   // projected figure so distant cogs shrink like everything else.
-  // Two poses per team: _gun (the cog holding its pistonball marker forward at the
+  // Two poses per team: _gun (the cog holding its marker forward at the
   // camera) is what a LIVE cog shows, since every live cog carries its gun; the
   // empty-handed master rides as the fallback until that one loads.
   //
@@ -2126,7 +2126,7 @@ body[data-embed] #board { top: 0; height: 100%; }
   var FPV_COG_H = 90;        // world px: a cog stands ~0.6x a corridor wall tall
   var FPV_FOG = 900;         // px at which depth shading bottoms out to ink
 
-  // --- pistonball comet tracers (the board's design, rebuilt in 3D) ---
+  // --- comet tracers (the starter's #fpv code, never reached here) ---
   // A shot is hitscan: the whole beam exists at once, so it can't literally
   // travel. The board solves this with a COMET (global.nim) and the PiP uses the
   // same visual language so the two views tell one story: a bright pistonball
@@ -2140,7 +2140,7 @@ body[data-embed] #board { top: 0; height: 100%; }
   var SHOT_FX_TICKS = WIRE.shotFxTicks || 12;  // sim.nim ShotFxTicks — the beam's lifetime
   var SHOT_MISS_AGE = 4;     // a miss draws this many ticks "older" (dimmer)
   var SHOT_TRAIL_FALLOFF = WIRE.shotTrailFalloff || 1.6;  // trail alpha = t^this
-  var SHOT_HEAD_WORLD = 11;  // world px across the leading pistonball
+  var SHOT_HEAD_WORLD = 11;  // world px across the leading projectile
   var SHOT_TRAIL_WORLD = 5;  // world px thick at the impact end (tapers to muzzle)
   // Beams fly at roughly chest height, a little below the eye line.
   var SHOT_EYE_DROP = 10;    // world px below eye level the beam travels
@@ -2513,7 +2513,7 @@ body[data-embed] #board { top: 0; height: 100%; }
     ctx.restore();
   }
 
-  // ---- pistonball comets in 3D ----
+  // ---- comets in 3D (starter #fpv code, never reached here) ----
   // The server sends each in-flight beam as a polyline of (bearing o, range d)
   // samples, with nulls where the beam leaves this seat's vision. We project
   // every sample the same way the walls and cogs are projected, so a beam
@@ -2686,7 +2686,7 @@ body[data-embed] #board { top: 0; height: 100%; }
         }
       }
 
-      // --- leading pistonball head at the impact end ---
+      // --- leading projectile head at the impact end ---
       var last = runs[runs.length - 1];
       var head = last[last.length - 1];
       // Only crown the head when the beam's impact end is genuinely the one we
@@ -2782,7 +2782,7 @@ body[data-embed] #board { top: 0; height: 100%; }
     // Size the blit off the projected figure so distant cogs shrink like the
     // walls. The front master's aspect is ~0.94 w/h; its HEIGHT tracks figH so
     // the cog stands the right size on the floor.
-    // Live cogs carry their pistonball marker, so they get the armed pose; both
+    // Live cogs carry their marker, so they get the armed pose; both
     // poses share the same aspect and trim, so the geometry is unchanged.
     var artImg = cogArtFor(e.team, true);
     var drawH = figH * 1.02;
@@ -4449,13 +4449,13 @@ body[data-embed] #board { top: 0; height: 100%; }
     var roster = (s.roster || []).slice().sort(function (a, b) {
       return (b.inphase || 0) - (a.inphase || 0) || a.piston - b.piston;
     });
-    var head = '<div class="ec-thead">' +
+    var thead = '<div class="ec-thead">' +
       '<span>Policy</span><span>Piston</span><span>In phase</span>' +
       '<span>Touches</span><span>LLM/FB</span></div>';
     var half = Math.ceil(roster.length / 2);
     var html = '';
     for (var col = 0; col < 2; col++) {
-      html += '<div>' + head;
+      html += '<div>' + thead;
       for (var i = col * half; i < Math.min(roster.length, (col + 1) * half); i++) {
         var p = roster[i];
         html += '<div class="ec-row">' +

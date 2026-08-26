@@ -70,7 +70,7 @@ proc permDigestOf*(perm: seq[int32]): int64 =
 proc drawEpisode*(
   seed: int
 ): tuple[perm: seq[int32], restHeights: seq[int32], startOffsetUm: int32] =
-  ## The episode's only two random draws, both at t = 0 from one dedicated
+  ## The episode's only three random draws, all at t = 0 from one dedicated
   ## stream:
   ##
   ## * `perm` — a Fisher-Yates shuffle of 0..19. Seat `s` drives piston

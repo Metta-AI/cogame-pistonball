@@ -437,7 +437,7 @@ proc step*(sim: var SimServer, commands: openArray[uint8]) =
     sim.heights[piston] = int32(height)
     sim.pistonVel[piston] = sim.heights[piston] - previous
 
-  # --- 4. four substeps ----------------------------------------------------
+  # --- 4. SubSteps substeps (16) --------------------------------------------
   let previousX = sim.ballX
   for i in 0 ..< PistonCount:
     sim.prevContactPistons[i] = sim.contactPistons[i]

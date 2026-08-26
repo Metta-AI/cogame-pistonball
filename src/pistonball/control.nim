@@ -22,7 +22,6 @@ import
 
 const
   RipplePeriod* = 48       ## ticks; a 2.0 s travelling wave.
-  RippleColumnTicks* = 24  ## tenths of a tick of phase per column (2.4 ticks).
   CatchVxUm* = 8_333       ## +0.20 m/s: the ball is going the WRONG way.
 
 proc rippleHeight*(script: PistonScript, tick, piston: int): int32 =
