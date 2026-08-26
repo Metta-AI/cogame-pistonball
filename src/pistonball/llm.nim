@@ -200,6 +200,19 @@ proc textOf*(
     raise newException(LlmError, "reply cut off at max_tokens before any " &
       "JSON: " & result.truncateRunes(160).replace("\n", " "))
 
+## The system prompt is the design note's, word for word, with ONE deliberate
+## difference: the `wave` and `catch` clauses say the ball is
+## "at-or-LEFT-of me", where design.md:520-527 says "at-or-right-of me".
+##
+## The note's prompt block is the internally inconsistent one, and everything
+## else in the repo agrees with the text below. The controller fires both
+## clauses on `dxp <= 0` — ball at or left of my centre — at `control.nim:65`
+## and `control.nim:75`; the note's own controller table (design.md:602,607)
+## says the same; so does its phase rule (design.md:268, "UP when
+## centreX_i >= ballX"); so does `docs/SCRIPTS.md`. A prompt that told the
+## model the opposite of what the controller does would make every LLM seat
+## worse than the baseline it is measured against, in a way no test could
+## see, because a script is legal whichever way it points.
 const SystemPrompt* = """
 You are ONE piston in a bank of twenty standing side by side under a heavy ball.
 The bank's job is to roll the ball LEFT, from the right wall to the left wall.
