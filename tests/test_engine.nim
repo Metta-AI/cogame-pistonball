@@ -198,6 +198,33 @@ suite "the decision turn":
     # episode's request rate under the sidecar's per-episode cap.
     check provider.batches[1].startMs - provider.batches[0].startMs >= 250
 
+  test "the rate-floor wait is NOT charged to the turn budget":
+    # The shipped manifest runs minBatchSpacingMs (45 000) > turnBudgetMs
+    # (20 000). If the budget clock started before the inter-batch sleep, every
+    # turn after the first would find it exhausted and fall back without ever
+    # issuing a request — which is what round 2 of the league did.
+    var game = seatedSim(testConfig())
+    game.phase = Playing
+    game.config.minBatchSpacingMs = 400
+    game.config.turnBudgetMs = 200
+    check game.config.minBatchSpacingMs > game.config.turnBudgetMs
+    var engine = llmEngine(game)
+    let provider = newFakeProvider(@[anthropicBody(GoodScript)])
+    engine.client = fakeClient(provider)
+    discard engine.turn(game, 0, 0)
+    let records = engine.turn(game, 1, 0)
+    # Turn 1 waited out the rate floor AND still issued its batch…
+    require provider.batches.len == 2
+    check provider.batches[1].size == 20
+    check provider.batches[1].startMs - provider.batches[0].startMs >= 400
+    # …so no seat fell back, least of all on the budget.
+    for record in records:
+      let node = parseJson(record)
+      check node["k"].getStr() != "fallback"
+    for seat in 0 ..< 20:
+      check engine.scripts[seat].source == srcLlm
+      check validScript(engine.scripts[seat])
+
   test "a HUNG provider still hands the turn back inside turnBudgetMs":
     var game = seatedSim(testConfig())
     game.phase = Playing

@@ -321,9 +321,7 @@ proc turn*(
     (sim.penaltyMilli - sim.turnStartPenaltyMilli)
   sim.turnStartProgressMilli = sim.progressMilli
   sim.turnStartPenaltyMilli = sim.penaltyMilli
-  let
-    budget = initDuration(milliseconds = max(1, sim.config.turnBudgetMs))
-    turnStart = getMonoTime()
+  let budget = initDuration(milliseconds = max(1, sim.config.turnBudgetMs))
   ## Throttle state is PER TURN: a 429 on turn k says nothing about turn k+1
   ## (the sidecar's window may have rolled), so the flag is cleared here and
   ## only suppresses this turn's retry.
@@ -374,6 +372,14 @@ proc turn*(
   if open.len > 0:
     engine.lastBatchStart = getMonoTime()
     engine.batchStarted = true
+
+  # `turnBudgetMs` bounds THIS TURN'S OWN WORK — the two attempts — and is
+  # therefore sampled AFTER the rate-floor sleep. Sampling it before would
+  # charge the wait to the budget, and since `minBatchSpacingMs` (45 000) is
+  # larger than `turnBudgetMs` (20 000) every turn after the first would find
+  # the budget already spent and fall back without issuing a request. The
+  # budget guard above already reads the turn as spacing + budget.
+  let turnStart = getMonoTime()
 
   # --- up to two PARALLEL batches ------------------------------------------
   var attempt = 0
