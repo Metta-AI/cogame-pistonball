@@ -130,6 +130,26 @@ suite "the manifest":
       check page["content"]["type"].getStr() == "text"
       check page["content"]["value"].getStr().len > 200
 
+  test "every docs page is the SHIPPED file, byte for byte":
+    # The manifest inlines the markdown, so a doc edit that stops at the file
+    # ships a stale page to the platform and nothing else notices: at r1 the
+    # Rules page still carried the pre-deviation physics and the piston-program
+    # page still carried the INVERTED wave rule ("at-or-right-of me"), which is
+    # the opposite of what the controller does.
+    let pages = manifest["game"]["docs"]["pages"]
+    check manifest["game"]["docs"]["readme"]["value"].getStr() ==
+      readFile(root / "README.md")
+    for page in pages:
+      let file =
+        case page["id"].getStr()
+        of "rules.md": "docs/RULES.md"
+        of "protocol.md": "docs/PROTOCOL.md"
+        of "scripts.md": "docs/SCRIPTS.md"
+        else: ""
+      checkpoint(page["id"].getStr())
+      check file.len > 0
+      check page["content"]["value"].getStr() == readFile(root / file)
+
   test "the secret namespace equals game.name, and compose agrees on the image":
     let name = manifest["game"]["name"].getStr()
     check "secret://coworld/" & name & "/anthropic_api_key" ==

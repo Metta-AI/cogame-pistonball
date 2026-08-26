@@ -70,21 +70,38 @@ Constants:
     BallInertia       =       480 milli-kg m^2
     WindowHalfWidth   = 1 000 000 um   (1.00 m)
     GoalX             = 1 200 000 um   (ball centre touching the goal wall)
-    BallStartX        = 8 400 000 um
+    BallStartX        = 8 400 000 um   (the drop line; the seeded offset below
+                                        moves the actual drop 2..20 cm left of it)
     BallStartY        = 3 400 000 um   (1.00 m above the floor: the ball is DROPPED)
     TravelDistance    = 7 200 000 um   (7.20 m)
-    GravityPerSubstep =     4 257 um/tick per substep (9.81 m/s^2 at 96 substeps/s)
+    GravityPerSubstep =     1 064 um/tick per substep (9.81 m/s^2 at 384 substeps/s)
 
-At t = 0 every head is set to a small random rest height h_i = 10 000 * k for
-k in 0..40 from the same seeded stream that drew perm, and the ball is placed at
-(BallStartX, BallStartY) at rest. Those two draws plus perm are the only random
-numbers the sim ever takes; nothing is drawn after tick 0.
+At t = 0 the seeded stream that drew perm makes two more draws, and then it is
+done for the episode:
+
+* every head is set to a small random rest height h_i = 10 000 * k for k in
+  0..40 - a slightly rough floor, so no two episodes open identically;
+* the ball is dropped at (BallStartX - startOffsetUm, BallStartY) at rest,
+  where startOffsetUm = 20 000 + 10 000 * k for k in 0..17, i.e. 2..20 cm left
+  of the drop line. This is not decoration. BallStartX sits exactly on the
+  boundary between columns 18 and 19, and a disc whose centre is exactly on a
+  head's edge sees a purely vertical normal: it balances on the corner and the
+  bank can lift it for ever without ever pushing it sideways. The offset puts
+  the drop point inside a column, where a rising neighbour's corner is a real
+  lateral push.
+
+Those three draws are the only random numbers the sim ever takes; nothing is
+drawn after tick 0.
 
 ## Time
 
-TargetFps = ReplayFps = 24. Each tick integrates 4 substeps of 1/96 s. A run is
-at most maxTicks = 1800 ticks = 75.0 s of sim time, divided into 8 decision
-turns of turnTicks = 225 ticks (9.375 s).
+TargetFps = ReplayFps = 24. Each tick integrates 16 substeps of 1/384 s. The
+contact spring is stiff - 150 mN per micrometre against a 6 kg ball - and a
+semi-implicit integrator only behaves while the step is well inside the spring's
+period; sixteen substeps is what it takes to make the ball settle on the bank
+instead of bouncing off it for ever. A run is at most maxTicks = 1800 ticks =
+75.0 s of sim time, divided into 8 decision turns of turnTicks = 225 ticks
+(9.375 s).
 
 ## Resolution order, every tick
 
@@ -103,13 +120,18 @@ turns of turnTicks = 225 ticks (9.375 s).
 3. Piston kinematics. h_i := clamp(h_i + u_i, 0, Stroke); pistonVel_i is the
    ACHIEVED velocity after clamping. Pistons are KINEMATIC: they move the ball,
    the ball never moves them.
-4. Four substeps of 1/96 s, each: gravity; contacts (the ceiling, the left
+4. Sixteen substeps of 1/384 s, each: gravity; contacts (the ceiling, the left
    wall, the right wall, then every piston head the broadphase returns,
    ascending - a head at extension 0 has its top surface exactly on the floor
    line, so the heads ARE the floor and there is no separate floor surface);
    semi-implicit Euler with air and spin drag and the velocity clamps; the
-   pose update; and a containment guard that clamps the centre into
-   x in [1 200 000, 8 400 000], y in [400 000, 4 000 000].
+   pose update (the drawn angle advances by exactly `spin` per tick); and a
+   containment guard that clamps the centre into x in [1 200 000, 8 400 000],
+   y in [200 000, 4 300 000]. The vertical bounds carry 0.2 m of slack past
+   the resting geometry on purpose: the guard exists to keep a tunnelling
+   artefact bounded, and a guard set exactly on the resting line would undo
+   the contact penetration every substep and the bank would never touch the
+   ball at all.
 5. Progress accounting: progress accrues +100.000 points for the full 7.20 m
    and a symmetric negative for backsliding, and the per-step penalty adds
    0.010 points every tick.
@@ -130,13 +152,17 @@ burns the clock and ends out_of_time with partial credit.
 
 The game is FULLY COOPERATIVE: every seat receives the identical score.
 
-    progress = 100 * (BallStartX - ballFinalX) / TravelDistance
+    progress = max(0, 100 * (ballDropX - ballFinalX) / TravelDistance)
     penalty  = 0.010 * ticksElapsed
     score    = progress - penalty
 
 Higher is better; leftward is positive. Range: score in [-18.000, +100.000).
-Delivering the ball ends the episode and therefore stops the penalty; that, and
-not a bonus, is the reward for speed.
+Progress is a telescoping sum, so only where the ball ENDED matters and giving
+ground inside a run costs exactly what it gained - but the reported total is
+floored at zero, so a bank that rolls the ball back into the right wall it was
+dropped beside scores the same -18.000 as one that never moved, and never
+worse. Delivering the ball ends the episode and therefore stops the penalty;
+that, and not a bonus, is the reward for speed.
 
 | Outcome | ticks | final ball X (m) | progress | penalty | score |
 |---|---|---|---|---|---|
@@ -145,6 +171,9 @@ not a bonus, is the reward for speed.
 | Three-quarters of the way, out of time | 1800 | 3.00 | +75.000 | 18.000 | +57.000 |
 | Nudged it a metre and jammed | 1800 | 7.40 | +13.889 | 18.000 | -4.111 |
 | Twenty pistons that never moved | 1800 | 8.40 | 0.000 | 18.000 | -18.000 |
+
+(The rows measure from the 8.40 m drop line; the seeded 2..20 cm offset shifts
+each row by at most 0.3 points.)
 
 The league ranks by the seat's mean results.scores value across its episodes -
 its cross-play mean. Elo is wrong for this coworld: with twenty identical
