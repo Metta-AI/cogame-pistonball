@@ -31,20 +31,26 @@ suite "determinism":
     let recorded = runScriptedRecording(4417231, [blWavebot], maxTicks = 450)
     let baseline = replayCommandLog(4417231, recorded.commandLog, 450)
     check baseline.len > 0
-    # Mutate ONE byte, mid-play (tick 0 is still the lobby, where no command
-    # actuates anything), and prove the chain diverges from that tick on.
-    let target = mutated_tick(baseline.len)
-    var mutated = recorded.commandLog
-    mutated[target][0] =
-      if mutated[target][0] < 214'u8: mutated[target][0] + 40'u8
-      else: mutated[target][0] - 40'u8
-    let after = replayCommandLog(4417231, mutated, 450)
-    var diverged = false
-    for tick in target ..< min(after.len, baseline.len):
-      if after[tick] != baseline[tick]:
-        diverged = true
-        break
-    check diverged
+    # ONE UNIT, not a nudge: a single command byte moved by 1 is a head
+    # velocity moved by 80000/127 = 629 um/tick, and the chain must diverge
+    # from that tick on. Swept over three ticks and three seats, mid-play
+    # (tick 0 is still the lobby, where no command actuates anything), because
+    # "any command byte" is the claim.
+    for target in [baseline.len div 3, mutated_tick(baseline.len),
+                   baseline.len * 2 div 3]:
+      for seat in [0, 7, PistonCount - 1]:
+        checkpoint("tick " & $target & " seat " & $seat)
+        var mutated = recorded.commandLog
+        let byte = mutated[target][seat]
+        mutated[target][seat] =
+          if byte < 254'u8: byte + 1'u8 else: byte - 1'u8
+        let after = replayCommandLog(4417231, mutated, 450)
+        var diverged = false
+        for tick in target ..< min(after.len, baseline.len):
+          if after[tick] != baseline[tick]:
+            diverged = true
+            break
+        check diverged
 
   test "the committed golden fixture still holds":
     # METRONOME, not wavebot: a blind ripple never delivers, so it runs the
