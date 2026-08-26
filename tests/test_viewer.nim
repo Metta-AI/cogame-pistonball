@@ -3,7 +3,7 @@
 ## rewrite and fails review.
 
 import
-  std/[os, strutils, unittest],
+  std/[os, parseutils, strutils, unittest],
   crunchy,
   ../src/pistonball/[sim]
 
@@ -35,6 +35,51 @@ let
   staticReplay = readFile(root / "replay-viewer" / "static_replay.js")
   viewerConfig = readFile(root / "replay-viewer" / "config.nims")
 
+# ---------------------------------------------------------------------------
+#  Enough CSS reading to check a LAYOUT, not just the presence of a rule.
+# ---------------------------------------------------------------------------
+
+proc ruleBody(selector: string, last = false, required = true): string =
+  ## The declarations of the rule introduced by `selector`. `last` picks the
+  ## pistonball override where the starter's base rule shares the selector.
+  let at = if last: page.rfind(selector) else: page.find(selector)
+  if at < 0:
+    doAssert not required, "no CSS rule for " & selector
+    return ""
+  let open = page.find('{', at)
+  page[open + 1 ..< page.find('}', open)]
+
+proc declaration(body, property: string): string =
+  for part in body.split(';'):
+    let colon = part.find(':')
+    if colon > 0 and part[0 ..< colon].strip() == property:
+      return part[colon + 1 .. ^1].strip()
+  ""
+
+proc units(value: string): seq[float] =
+  ## Every `calc(N * var(--u))` length in a declaration, in `--u` units.
+  var at = 0
+  while true:
+    let start = value.find("calc(", at)
+    if start < 0:
+      return
+    var number: float
+    let read = parseFloat(value, number, start + 5)
+    doAssert read > 0, value
+    result.add(number)
+    at = start + 5 + read
+
+proc spanTexts(markup: string): seq[string] =
+  var at = 0
+  while true:
+    let open = markup.find("<span>", at)
+    if open < 0:
+      return
+    let close = markup.find("</span>", open)
+    doAssert close > open, markup
+    result.add(markup[open + len("<span>") ..< close])
+    at = close
+
 suite "the broadcast chrome":
   test "chrome_common.js is the starter's file, unedited":
     # Byte-for-byte, and PINNED: substring checks cannot tell a copy from a
@@ -56,6 +101,72 @@ suite "the broadcast chrome":
   test "the endcard stops at the transport band and every seek dismisses it":
     check "bottom: var(--band" in page
     check "$('endcard').classList.remove('on')" in page
+
+  test "every endcard column header FITS the column it labels":
+    # The header grid and each row grid are SEPARATE elements, so the columns
+    # have to be fixed widths for the two to line up — which makes "does the
+    # header fit?" arithmetic, and checkable here. At the starter's inherited
+    # 7.5u/0.12em they did not fit: TOUCHES and LLM/FB ran past their cells
+    # and overprinted their neighbours on the endcard.
+    const
+      HeadGlyphEm = 0.7
+        ## Upper bound on ONE uppercase glyph of the fine font, in ems. The
+        ## header is uppercased by `text-transform`, and caps are the widest
+        ## thing it can be asked to draw.
+      NameGlyphEm = 0.6
+        ## …and on one glyph of the pixel row font, which is the mixed-case
+        ## policy name.
+      MinNameChars = 7.0
+        ## `.ec-row .pcell .pname` refuses to shrink below `7ch`, so a name
+        ## column narrower than that clips a short policy name.
+    let
+      baseRow = ruleBody("#endcard .ec-thead,\n#endcard .ec-row {")
+      bankRow = ruleBody(
+        "#endcard #ec-rows-bank .ec-thead,\n#endcard #ec-rows-bank .ec-row {")
+      bankHead = ruleBody("#endcard #ec-rows-bank .ec-thead {", required = false)
+      baseHead = ruleBody("#endcard .ec-thead {")
+      columns = units(bankRow.declaration("grid-template-columns"))
+      cellGap = units(baseRow.declaration("gap"))[0]
+      rowFont = units(ruleBody("#endcard .ec-row {", last = true)
+        .declaration("font-size"))[0]
+    # The header draws at its own size and tracking if this table sets one,
+    # else at the starter's.
+    var
+      headFontText = bankHead.declaration("font-size")
+      headTrackingText = bankHead.declaration("letter-spacing")
+    if headFontText.len == 0:
+      headFontText = baseHead.declaration("font-size")
+    if headTrackingText.len == 0:
+      headTrackingText = baseHead.declaration("letter-spacing")
+    let
+      headFont = units(headFontText)[0]
+      headTracking = parseFloat(headTrackingText.replace("em", ""))
+    let start = page.find("var thead = ")
+    check start > 0
+    let labels = spanTexts(page[start ..< page.find(';', start)])
+    check labels == @["Policy", "Piston", "In phase", "Touches", "LLM/FB"]
+    # The first column is the `1fr` name cell; the other four are fixed.
+    check columns.len == labels.len - 1
+    for i in 1 ..< labels.len:
+      let needed = float(labels[i].len) * headFont * HeadGlyphEm +
+        float(labels[i].len - 1) * headTracking * headFont
+      checkpoint(labels[i].toUpperAscii & " needs " & $needed &
+        "u and has " & $columns[i - 1] & "u")
+      check needed <= columns[i - 1]
+    # …and the fixed columns are not paid for out of the name column: the card
+    # is two of these tables side by side inside its own padding.
+    let
+      cardWidth = units(ruleBody("#endcard .ec-team {", last = true)
+        .declaration("width"))[0]
+      cardPadX = units(ruleBody("#endcard .ec-team {").declaration("padding"))[1]
+      tableGap = units(
+        ruleBody("#endcard #ec-rows-bank {").declaration("column-gap"))[0]
+      tableWidth = (cardWidth - 2 * cardPadX - tableGap) / 2
+    var nameWidth = tableWidth - float(columns.len) * cellGap
+    for column in columns:
+      nameWidth -= column
+    checkpoint("name column " & $nameWidth & "u")
+    check nameWidth >= MinNameChars * rowFont * NameGlyphEm
 
   test "the kept chrome elements are all present":
     for id in ["viewport", "stage", "board", "lightpool", "grain",

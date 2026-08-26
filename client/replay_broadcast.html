@@ -4178,7 +4178,16 @@ body[data-embed] #board { top: 0; height: 100%; }
 #endcard #ec-team-bank > .ec-thead { display: none; }
 #endcard #ec-rows-bank .ec-thead,
 #endcard #ec-rows-bank .ec-row {
-  grid-template-columns: 1fr calc(28 * var(--u)) calc(32 * var(--u)) calc(28 * var(--u)) calc(32 * var(--u));
+  grid-template-columns: 1fr calc(28 * var(--u)) calc(36 * var(--u)) calc(32 * var(--u)) calc(28 * var(--u));
+}
+/* The two grids are separate elements, so the columns must be FIXED to line
+   up — which means every header label has to FIT the column it sits in. At
+   the inherited 7.5u/0.12em they did not: TOUCHES and LLM/FB ran past their
+   cells and overprinted their neighbours. This header sets its own size and
+   tracking, and the widths above are chosen for it. */
+#endcard #ec-rows-bank .ec-thead {
+  font-size: calc(6 * var(--u));
+  letter-spacing: 0.02em;
 }
 #endcard .how { max-width: calc(430 * var(--u)); }
 
