@@ -4162,6 +4162,24 @@ body[data-embed] #board { top: 0; height: 100%; }
 .beat-marker.over { background: var(--paper); width: calc(4 * var(--u)); }
 .beat-marker.gameover { background: var(--paper); width: calc(4 * var(--u)); }
 
+/* --- the endcard lists TWENTY seats, not two teams of four ------------- */
+/* One column of twenty rows is TALLER than the board region, and a flexbox
+   card that overflows does so in BOTH directions — the headline ends up over
+   the scorebug. Two columns of ten fit inside the band, so the card stays
+   where relayout() put it. */
+#endcard .ec-team { width: calc(430 * var(--u)); }
+#endcard #ec-rows-bank {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: calc(18 * var(--u));
+}
+#endcard #ec-team-bank .ec-thead,
+#endcard #ec-rows-bank .ec-row {
+  grid-template-columns: 1fr calc(30 * var(--u)) calc(34 * var(--u)) calc(30 * var(--u)) calc(34 * var(--u));
+}
+#endcard #ec-team-bank .ec-thead { grid-column: 1 / -1; }
+#endcard .how { max-width: calc(430 * var(--u)); }
+
 /* --- 360 px floor ------------------------------------------------------ */
 /* Twenty policy names cannot be shown at that width and are NOT attempted:
    the scorebug keeps the score, the journey bar, the clock and the bank
@@ -4420,8 +4438,7 @@ body[data-embed] #board { top: 0; height: 100%; }
       })[o.endRule] || 'FULL TIME';
     }
     if (how) {
-      how.textContent = 'Twenty pistons, one ball, one score: +100 for the ' +
-        'goal wall, minus 0.24 points a second. The bank spent ' +
+      how.textContent = 'One score for twenty pistons. The bank spent ' +
         Math.round(((s.pb && s.pb.phasePermille) || 0) / 10) +
         '% of its engaged time on the right side of the ball.';
     }
@@ -4449,6 +4466,11 @@ body[data-embed] #board { top: 0; height: 100%; }
       head2.innerHTML =
         '<span>Policy</span><span>Piston</span><span>In phase</span>' +
         '<span>Touches</span><span>LLM/FB</span>';
+      // Move it INSIDE the two-column grid so it spans both columns and its
+      // cells line up with the rows underneath.
+      if (rows.parentNode === head2.parentNode) {
+        rows.insertBefore(head2, rows.firstChild);
+      }
     }
     var big = document.getElementById('ec-bank');
     if (big) big.textContent = score;

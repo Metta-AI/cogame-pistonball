@@ -39,6 +39,9 @@ const
   BandCount* = 6
   BandRows* = MapHeight div BandCount
   DarkBandSpriteBase* = 110
+  HousingSpriteId* = 120
+  DarkHousingSpriteId* = 121
+  HousingRows* = MapHeight - FloorRow
   RodSpriteId* = 200
   HeadSpriteBase* = 210         ## +0 idle, +1 in phase, +2 out of phase, +3 own
   BallSpriteBase* = 300
@@ -53,7 +56,8 @@ const
   HeadObjectBase* = 60
   BallObjectId* = 100
   TrailObjectBase* = 110
-  RailObjectId* = 130
+  HousingObjectId* = 130
+  RailObjectId* = 131
   PuffObjectBase* = 140
   BubbleObjectBase* = 160
 
@@ -100,6 +104,8 @@ proc gameDir*(): string =
 var
   bakedBands: seq[seq[uint8]]
   bakedDarkBands: seq[seq[uint8]]
+  bakedHousing: seq[uint8]
+  bakedDarkHousing: seq[uint8]
   bakedRod: seq[uint8]
   bakedHeads: seq[seq[uint8]]
   bakedBall: seq[seq[uint8]]
@@ -182,15 +188,20 @@ proc bakeBoard(): Image =
         r = uint8(int(r) + 10); g = uint8(int(g) + 10); b = uint8(int(b) + 12)
       result.put(x, y, r, g, b, 255)
   # Housing: the concrete plate under the floor line, tiled from the shipped
-  # wall texture and darkened so the heads read against it.
+  # wall texture. The texture is used for its GRAIN, not its colour: it is
+  # flattened to luminance and lifted onto a concrete base, because the source
+  # plate has dark alcoves in it and a raw tile paints them straight through
+  # as holes in the machine bed.
   for y in FloorRow ..< MapHeight:
     for x in 0 ..< MapWidth:
-      let src = concrete.data[
-        (y mod concrete.height) * concrete.width + (x mod concrete.width)].rgba()
+      let
+        src = concrete.data[
+          (y mod concrete.height) * concrete.width + (x mod concrete.width)].rgba()
+        grain = (int(src.r) * 30 + int(src.g) * 59 + int(src.b) * 11) div 100
       result.put(x, y,
-        uint8(int(src.r) * 62 div 100),
-        uint8(int(src.g) * 62 div 100),
-        uint8(int(src.b) * 60 div 100), 255)
+        uint8(38 + grain * 44 div 100),
+        uint8(36 + grain * 43 div 100),
+        uint8(32 + grain * 40 div 100), 255)
     # Rivet line just under the floor.
     if y == FloorRow + 3:
       var x = 8
@@ -202,27 +213,36 @@ proc bakeBoard(): Image =
   for x in 0 ..< MapWidth:
     result.put(x, FloorRow, 176, 170, 150, 255)
     result.put(x, FloorRow + 1, 92, 88, 78, 255)
-  # Left GOAL wall with chevrons and a lamp; right wall as a steel plate.
+  # Left GOAL wall with chevrons and a lamp; right wall as a steel plate. Both
+  # take the shipped plate's GRAIN and none of its colour, for the same reason
+  # the housing does — the source is a lit dungeon wall, and a raw tile puts
+  # torches in a machine shop.
   for y in 0 ..< MapHeight:
     for x in 0 ..< LeftWallPx:
-      let src = plate.data[
-        (y mod plate.height) * plate.width + (x mod plate.width)].rgba()
+      let
+        src = plate.data[
+          (y mod plate.height) * plate.width + (x mod plate.width)].rgba()
+        grain = (int(src.r) * 30 + int(src.g) * 59 + int(src.b) * 11) div 100
       var
-        r = uint8(int(src.r) * 55 div 100 + 30)
-        g = uint8(int(src.g) * 60 div 100 + 34)
-        b = uint8(int(src.b) * 50 div 100 + 22)
+        r = 44 + grain * 40 div 100
+        g = 42 + grain * 39 div 100
+        b = 38 + grain * 36 div 100
       if ((x + y) div 14) mod 2 == 0 and y > 120:
-        r = uint8(min(255, int(r) + 60))
-        g = uint8(min(255, int(g) + 42))
-        b = uint8(max(0, int(b) - 12))
-      result.put(x, y, r, g, b, 255)
+        # The goal wall is painted with hazard chevrons: this end of the box is
+        # the one the bank is trying to reach.
+        r = min(255, r + 92)
+        g = min(255, g + 64)
+        b = max(0, b - 14)
+      result.put(x, y, uint8(r), uint8(g), uint8(b), 255)
     for x in RightWallPx ..< MapWidth:
-      let src = plate.data[
-        (y mod plate.height) * plate.width + (x mod plate.width)].rgba()
+      let
+        src = plate.data[
+          (y mod plate.height) * plate.width + (x mod plate.width)].rgba()
+        grain = (int(src.r) * 30 + int(src.g) * 59 + int(src.b) * 11) div 100
       result.put(x, y,
-        uint8(int(src.r) * 46 div 100 + 16),
-        uint8(int(src.g) * 48 div 100 + 18),
-        uint8(int(src.b) * 52 div 100 + 24), 255)
+        uint8(32 + grain * 34 div 100),
+        uint8(34 + grain * 35 div 100),
+        uint8(40 + grain * 38 div 100), 255)
   # The goal lamp.
   for y in 40 .. 78:
     for x in 26 .. 74:
@@ -402,6 +422,23 @@ proc warmBoardRenderCaches*() =
       dark[pixel * 4 + 3] = slice[pixel * 4 + 3]
     bakedBands.add(slice)
     bakedDarkBands.add(dark)
+  # The housing strip is emitted a SECOND time, above the rods: a rod is a
+  # polished shaft that disappears into the machine bed, and a bed drawn only
+  # in the background band would have every rod painted over it down to the
+  # bottom of the frame.
+  block:
+    let bytes = MapWidth * HousingRows * 4
+    bakedHousing = newSeq[uint8](bytes)
+    bakedDarkHousing = newSeq[uint8](bytes)
+    for i in 0 ..< bytes:
+      bakedHousing[i] = full[FloorRow * MapWidth * 4 + i]
+    for pixel in 0 ..< MapWidth * HousingRows:
+      bakedDarkHousing[pixel * 4] = uint8(int(bakedHousing[pixel * 4]) * 16 div 100)
+      bakedDarkHousing[pixel * 4 + 1] =
+        uint8(int(bakedHousing[pixel * 4 + 1]) * 16 div 100)
+      bakedDarkHousing[pixel * 4 + 2] =
+        uint8(int(bakedHousing[pixel * 4 + 2]) * 18 div 100)
+      bakedDarkHousing[pixel * 4 + 3] = bakedHousing[pixel * 4 + 3]
   bakedRod = bakeRod()
   bakedHeads = @[
     bakeHead(126, 128, 134, false),   # not engaged
@@ -416,6 +453,16 @@ proc warmBoardRenderCaches*() =
   bakedTrail = bakeDot(18, 210, 214, 224, 0.5)
   bakedPuff = bakeDot(34, 236, 224, 190, 0.7)
   bakesReady = true
+
+proc bandPixels*(band: int): seq[uint8] =
+  ## One baked background band. Exported for the art probes in tools/.
+  warmBoardRenderCaches()
+  bakedBands[band]
+
+proc housingPixels*(): seq[uint8] =
+  ## The baked housing strip. Exported for the art probes in tools/.
+  warmBoardRenderCaches()
+  bakedHousing
 
 # ---------------------------------------------------------------------------
 #  Emission
@@ -505,6 +552,14 @@ proc addBoard(
     packet.addObject(HeadObjectBase + piston, x, headTop, -100,
       MapLayerId, headSpriteFor(sim, piston, ownPiston))
     ids.add(HeadObjectBase + piston)
+  block housing:
+    let id = (if dark: DarkHousingSpriteId else: HousingSpriteId)
+    packet.defineSprite(defs, id, MapWidth, HousingRows,
+      (if dark: bakedDarkHousing else: bakedHousing))
+    # Between the rods (-200) and the heads (-100): the shafts run behind the
+    # bed, the heads and the ball stand in front of it.
+    packet.addObject(HousingObjectId, 0, FloorRow, -150, MapLayerId, id)
+    ids.add(HousingObjectId)
   if showBall:
     packet.defineSprite(defs, RailSpriteId, 2, MapHeight, bakedRail)
     packet.defineSprite(defs, TrailSpriteId, 18, 18, bakedTrail)
