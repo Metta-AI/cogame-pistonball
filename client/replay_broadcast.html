@@ -4173,11 +4173,13 @@ body[data-embed] #board { top: 0; height: 100%; }
   grid-template-columns: 1fr 1fr;
   column-gap: calc(18 * var(--u));
 }
-#endcard #ec-team-bank .ec-thead,
+/* Each column carries its OWN header, because a single header spanning both
+   columns lines its cells up with neither. */
+#endcard #ec-team-bank > .ec-thead { display: none; }
+#endcard #ec-rows-bank .ec-thead,
 #endcard #ec-rows-bank .ec-row {
-  grid-template-columns: 1fr calc(30 * var(--u)) calc(34 * var(--u)) calc(30 * var(--u)) calc(34 * var(--u));
+  grid-template-columns: 1fr calc(28 * var(--u)) calc(32 * var(--u)) calc(28 * var(--u)) calc(32 * var(--u));
 }
-#endcard #ec-team-bank .ec-thead { grid-column: 1 / -1; }
 #endcard .how { max-width: calc(430 * var(--u)); }
 
 /* --- 360 px floor ------------------------------------------------------ */
@@ -4447,31 +4449,27 @@ body[data-embed] #board { top: 0; height: 100%; }
     var roster = (s.roster || []).slice().sort(function (a, b) {
       return (b.inphase || 0) - (a.inphase || 0) || a.piston - b.piston;
     });
+    var head = '<div class="ec-thead">' +
+      '<span>Policy</span><span>Piston</span><span>In phase</span>' +
+      '<span>Touches</span><span>LLM/FB</span></div>';
+    var half = Math.ceil(roster.length / 2);
     var html = '';
-    for (var i = 0; i < roster.length; i++) {
-      var p = roster[i];
-      html += '<div class="ec-row">' +
-        '<span class="pcell"><span class="pname">' + CTX.esc(p.name || '') +
-        '</span></span>' +
-        '<span>' + (p.piston + 1) + '</span>' +
-        '<span>' + Math.round((p.inphase || 0) / 10) + '%</span>' +
-        '<span>' + (p.touches || 0) + '</span>' +
-        '<span>' + (p.llm || 0) + '/' + (p.fb || 0) + '</span>' +
-        '</div>';
+    for (var col = 0; col < 2; col++) {
+      html += '<div>' + head;
+      for (var i = col * half; i < Math.min(roster.length, (col + 1) * half); i++) {
+        var p = roster[i];
+        html += '<div class="ec-row">' +
+          '<span class="pcell"><span class="pname">' + CTX.esc(p.name || '') +
+          '</span></span>' +
+          '<span>' + (p.piston + 1) + '</span>' +
+          '<span>' + Math.round((p.inphase || 0) / 10) + '%</span>' +
+          '<span>' + (p.touches || 0) + '</span>' +
+          '<span>' + (p.llm || 0) + '/' + (p.fb || 0) + '</span>' +
+          '</div>';
+      }
+      html += '</div>';
     }
     if (rows._pbKey !== html) { rows._pbKey = html; rows.innerHTML = html; }
-    var head2 = document.querySelector('#ec-team-bank .ec-thead');
-    if (head2 && head2._pb !== 1) {
-      head2._pb = 1;
-      head2.innerHTML =
-        '<span>Policy</span><span>Piston</span><span>In phase</span>' +
-        '<span>Touches</span><span>LLM/FB</span>';
-      // Move it INSIDE the two-column grid so it spans both columns and its
-      // cells line up with the rows underneath.
-      if (rows.parentNode === head2.parentNode) {
-        rows.insertBefore(head2, rows.firstChild);
-      }
-    }
     var big = document.getElementById('ec-bank');
     if (big) big.textContent = score;
     var cap = document.querySelector('#ec-team-bank .fl-cap');
