@@ -96,15 +96,32 @@ suite "controller":
       let a = rippleHeight(script, 0, piston)
       let b = rippleHeight(script, RipplePeriod, piston)
       check a == b
-    # The phase offset advances one column at a time, so the wave TRAVELS.
-    var previous = -1.0
-    var monotone = true
+    # The phase offset advances one column at a time, so the wave TRAVELS —
+    # asserted on `rippleHeight` itself, by finding each column's CREST inside
+    # one period. Column i peaks at 12 + 2.4*i ticks, so the crest walks 2 or
+    # 3 ticks to the right per column and laps exactly once across the twenty
+    # columns (20 * 2.4 = 48 = one period).
+    var previous = -1
+    var wraps = 0
     for piston in 0 ..< PistonCount:
-      let phase = float(piston) / float(PistonCount)
-      if phase <= previous:
-        monotone = false
-      previous = phase
-    check monotone
+      var crest = 0
+      var peak = int32.low
+      for tick in 0 ..< RipplePeriod:
+        let height = rippleHeight(script, tick, piston)
+        checkpoint("piston " & $piston & " tick " & $tick)
+        check height >= script.idleUm
+        check height <= script.upUm
+        if height > peak:
+          peak = height
+          crest = tick
+      checkpoint("piston " & $piston & " crest " & $crest)
+      check crest == (12 + (24 * piston + 5) div 10) mod RipplePeriod
+      if piston > 0:
+        check (crest - previous + RipplePeriod) mod RipplePeriod in [2, 3]
+        if crest < previous:
+          inc wraps
+      previous = crest
+    check wraps == 1
 
   test "a non-Playing phase forces cmd 127":
     var game = seatedSim(testConfig())
