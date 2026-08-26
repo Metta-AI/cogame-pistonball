@@ -3,7 +3,8 @@
 
 import
   std/[json, os, osproc, strutils, tables, unicode, unittest],
-  ../src/pistonball/[sim, scripts, control, baselines, decide, replays, roster],
+  ../src/pistonball/[sim, scripts, control, baselines, decide, events, replays,
+                     roster],
   ./helpers
 
 proc recordEpisode(path: string, seed = 4417231, maxTicks = 900): SimServer =
@@ -12,6 +13,7 @@ proc recordEpisode(path: string, seed = 4417231, maxTicks = 900): SimServer =
   ## UTF-8 path is real rather than nominal.
   var config = testConfig(seed, maxTicks)
   var game = initSimServer(config)
+  game.collectEvents = true            # what the server does with an events path
   var writer = openReplayWriter(
     path, config.configJson(game.perm, game.restHeights))
   writer.lastMasks = newSeq[uint8](game.seatCount())
@@ -115,6 +117,17 @@ suite "the replay":
     check live.endReason in [ReasonComplete, ReasonDeadline]
     check live.endRule in [EndRuleDelivered, EndRuleOutOfTime,
                            EndRuleWallClock]
+    # The tier-2 stream carries the two events a real wave must produce: the
+    # ball is HANDED OFF from column to column, and a rising head LAUNCHES it.
+    # An episode with neither is one where nothing touched the ball.
+    var kinds = initCountTable[string]()
+    for event in live.events:
+      kinds.inc(event.kind.key())
+      check event.tick >= 0
+      check event.tick <= live.tickCount
+    checkpoint($kinds)
+    check kinds["handoff"] >= 1
+    check kinds["launch"] >= 1
 
   test "tools/replay_summary.py parses under a STRICT UTF-8 JSON parser":
     let path = getTempDir() / "pistonball-test.replay"
