@@ -4,13 +4,22 @@ import
   pistonball/sim,
   pistonball/server
 
-const LegacyFixedSeed = 4417231
+const LegacyFixedSeed* = 4417231
   ## The compiled-in default seed. A config carrying it (or no seed at all)
   ## gets a FRESH random seed: with a public fixed seed the seat -> piston
   ## permutation and the twenty opening rest heights would be pre-computable
   ## by an entrant, which is exactly what the seeded shuffle exists to stop.
+  ##
+  ## The certification fixture carries exactly this value, and that is the
+  ## point rather than a collision: `coworld_manifest_template.json` is a
+  ## PUBLIC document, so a seed pinned there is a seed every entrant can read,
+  ## and the sentinel is what turns it back into "randomise me". Certification
+  ## therefore runs on a fresh seed every time; it asserts an outcome
+  ## (twenty seats, a full-length episode, `reason=complete`) that holds for
+  ## every seed, not one recorded hash chain. A forensic re-run that really
+  ## does need one episode back names any OTHER seed and gets it honoured.
 
-proc seedPinned(configJson: string): bool =
+proc seedPinned*(configJson: string): bool =
   ## True when the runtime config explicitly pins a seed other than the
   ## default sentinel (fixture recordings, forensic re-runs, certification).
   if configJson.len == 0:
@@ -30,7 +39,7 @@ proc randomSeed(): int =
   (int(buf[0]) shl 24 or int(buf[1]) shl 16 or
     int(buf[2]) shl 8 or int(buf[3])) and 0x7FFF_FFFF
 
-proc stripUnpinnedSeed(configJson: string): string =
+proc stripUnpinnedSeed*(configJson: string): string =
   ## Drops the sentinel seed from an unpinned config so it cannot clobber the
   ## randomized seed injected before `config.update`.
   if configJson.len == 0:

@@ -3,9 +3,11 @@
 
 import
   std/[json, os, strutils, unittest],
-  ../src/pistonball/[sim]
+  ../src/pistonball/[sim],
+  ../src/pistonball as entrypoint
 
 let root = currentSourcePath().parentDir().parentDir()
+let manifest = parseJson(readFile(root / "coworld_manifest_template.json"))
 
 suite "startup":
   test "an unparseable config is a clean PistonballError, not a traceback":
@@ -41,10 +43,29 @@ suite "startup":
     # seed at all) gets a fresh random seed, because a public fixed seed would
     # make the seat -> piston permutation pre-computable by an entrant.
     let source = readFile(root / "src" / "pistonball.nim")
-    check "LegacyFixedSeed = 4417231" in source
+    check "LegacyFixedSeed* = 4417231" in source
     check "seed not pinned; randomized" in source
     check "stripUnpinnedSeed" in source
     check defaultGameConfig().seed == 4417231
+
+  test "the SENTINEL seed is not a pin, wherever it comes from":
+    # The collision the value has with the certification fixture is the point,
+    # not an accident: the manifest is public, so a seed pinned there is a seed
+    # every entrant can read. Asserted on the fixture's own config text.
+    let fixture = $manifest["certification"]["game_config"]
+    check manifest["certification"]["game_config"]["seed"].getInt ==
+      entrypoint.LegacyFixedSeed
+    check not entrypoint.seedPinned(fixture)
+    check not entrypoint.seedPinned("{\"seed\": 4417231}")
+    check not entrypoint.seedPinned("{}")
+    check not entrypoint.seedPinned("")
+    check entrypoint.seedPinned("{\"seed\": 20260825}")
+    # …and the sentinel is STRIPPED, so it cannot clobber the injected seed.
+    let stripped = parseJson(entrypoint.stripUnpinnedSeed(fixture))
+    check not stripped.hasKey("seed")
+    check stripped["num_agents"].getInt == 20
+    check parseJson(entrypoint.stripUnpinnedSeed(
+      "{\"seed\": 20260825}")).hasKey("seed") == false
 
   test "both entrypoints exist and the image installs them":
     check fileExists(root / "src" / "pistonball.nim")
