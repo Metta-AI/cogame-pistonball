@@ -32,8 +32,15 @@ const
     ## step is 1.65 of that and the ball simply bounced off the bank forever;
     ## at sixteen it is 0.41 and the same spring settles in a few substeps
     ## with a coefficient of restitution under 0.1. The stiffness is what the
-    ## design pins (a 392 um resting penetration); the step is what had to
-    ## move to integrate it.
+    ## design pins; the step is what had to move to integrate it.
+    ##
+    ## What the ball actually rests at is 0 .. 65 um of penetration, not the
+    ## 392 um the spring alone would hold it at (150 mN/um against a 6 kg
+    ## weight on this timebase), because the pose update truncates
+    ## `v div SubSteps`: a vertical speed under 16 um/tick moves the ball zero
+    ## micrometres, so it rides one substep of gravity, 1064/16 = 66 um, above
+    ## the static equilibrium. Measured at every stroke and pinned by
+    ## `tests/test_physics.nim`.
   PlaybackSpeeds* = [1, 2, 3, 4, 8, 16]
 
   PistonCount* = 20          ## the bank is exactly twenty heads. Not a knob.

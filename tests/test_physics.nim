@@ -36,14 +36,43 @@ suite "pistonball physics":
       game.heights[i] = 0
     game.ballX = 4_800_000'i32
     game.ballY = BallStartY
-    for _ in 0 ..< 240:
+    var deepest = 0'i32
+    var shallowest = int32.high
+    for tick in 0 ..< 600:
       game.step(holdAll())
+      if tick < 240:
+        continue                       # still falling and bouncing
+      let settled = (game.ballY + BallRadius) - FloorY
+      if settled > deepest: deepest = settled
+      if settled < shallowest: shallowest = settled
     check abs32(game.ballVy) < 4_000'i32
-    # It comes to REST ON the bank: the contact spring holds it within a
-    # fraction of a millimetre of the surface and never lets it sink in.
+    # It comes to REST ON the bank, in a limit cycle 0 .. 65 um deep, measured
+    # at every stroke from 0 to 1.60 m and on three seeds. NOT the 392 um the
+    # spring alone would sit at (150 mN/um against a 6 kg weight): the pose
+    # update truncates `v div SubSteps`, so a vertical speed under 16 um/tick
+    # moves the ball zero micrometres and the ball rides one substep of
+    # gravity, 1064/16 = 66 um, above the static equilibrium. Pinned tight
+    # deliberately — a solver that starts sinking in, or one that starts
+    # hovering off the heads, breaks the contact model long before it breaks
+    # the old `< 5000` bound.
     let penetration = (game.ballY + BallRadius) - FloorY
     check penetration >= 0'i32
-    check penetration < 5_000'i32
+    check shallowest >= 0'i32
+    check deepest <= 80'i32
+
+  test "friction never reverses the slide direction within one substep":
+    # The Coulomb force carries a `150 * |v_t|` viscous cap precisely so a
+    # resting contact cannot chatter across zero. Away from the walls a
+    # sliding ball therefore only ever LOSES tangential speed.
+    for start in [-60_000'i32, -5_000'i32]:
+      var game = levelSim(400_000'i32)
+      game.ballVx = start
+      for _ in 0 ..< 240:
+        game.step(holdAll())
+        checkpoint("start " & $start & " vx " & $game.ballVx)
+        check game.ballVx <= 0'i32          # never flicked back to the right
+      check abs32(game.ballVx) < abs32(start)   # and friction took, not gave
+      check game.ballX > GuardMinX          # never reached a wall
 
   test "a ball at rest on a level bank does not drift":
     var game = levelSim(400_000'i32)
