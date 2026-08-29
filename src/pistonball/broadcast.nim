@@ -175,7 +175,7 @@ proc buildStateJson*(
   sim: SimServer,
   events: JsonNode,
   playing: bool,
-  speed: int,
+  speed: float,      # the speed the chrome SHOWS: 0.5 at the replay's 1/2x
   maxTick: int,
   looping: bool,
   transportEnabled: bool,

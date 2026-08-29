@@ -5,17 +5,19 @@
 import
   std/[os, parseutils, strutils, unittest],
   crunchy,
-  ../src/pistonball/[sim]
+  ../src/pistonball/[sim, wire_constants]
 
 const StarterChromeSha256 =
-  "7ace7287e0d19bf0fddb2362c55e4d76dfb44adcd4fbc8d1743b0557ced72f7c"
-    ## sha256 of `client/chrome_common.js` in Metta-AI/coworld-ctf, the starter
-    ## this repo's chrome was taken from. The file is copied BYTE-FOR-BYTE and
-    ## the one identifier it needs (`window.CTF_WIRE`) is aliased in
-    ## `wire_constants.nim` rather than edited into the shared chrome, so this
-    ## digest is a constant, not a moving target: a diff here is either an
-    ## unrecorded fork of the shared chrome or a starter bump, and both need
-    ## saying out loud.
+  "594ed4a72cd908922c982d0f3e3ffb04ae1d97568fcd5f5daa794042662a369c"
+    ## sha256 of `client/chrome_common.js`: Metta-AI/coworld-ctf's file (whose
+    ## own digest was
+    ## 7ace7287e0d19bf0fddb2362c55e4d76dfb44adcd4fbc8d1743b0557ced72f7c) plus
+    ## the fleet-wide replay-transport patch, and NOTHING else. Saying it out
+    ## loud, as this pin exists to force: the patch is two lines — 0.5 joins
+    ## the fallback speed list, and the speed→command map learns `0.5: '5'` so
+    ## the new chip has a command to send. The identifier the chrome needs
+    ## (`window.CTF_WIRE`) is still aliased in `wire_constants.nim` rather than
+    ## edited here, so any OTHER diff is an unrecorded fork or a starter bump.
 
 const StarterCoreSha256 =
   "172c4680129d608fd687cfd86436b675eef32c8652be6afe5f3189dd20c5aa9c"
@@ -81,7 +83,7 @@ proc spanTexts(markup: string): seq[string] =
     at = close
 
 suite "the broadcast chrome":
-  test "chrome_common.js is the starter's file, unedited":
+  test "chrome_common.js is the starter's file plus the 1/2x patch":
     # Byte-for-byte, and PINNED: substring checks cannot tell a copy from a
     # rewrite that happens to contain the same three strings.
     check hex(sha256(chrome)) == StarterChromeSha256
@@ -89,6 +91,26 @@ suite "the broadcast chrome":
     check "window.CTF_WIRE || {}" in chrome
     check "pistonball" notin chrome
     check chrome.len > 30_000
+
+  test "the 1/2x chip is on the engine's speed list AND has a command":
+    # The chips are built from the ENGINE's speed list, so 0.5 has to reach the
+    # page through the wire block; a chip whose value is missing from the
+    # speed→command map is a dead button, so it has to be in the map too. The
+    # command '5' itself is the engine's, and tests/test_replay.nim owns that
+    # end.
+    check "speeds:[0.5," in WireConstantsJs
+    check "0.5: '5'" in chrome
+    check "[0.5, 1, 2, 3, 4, 8, 16]" in chrome    # the file:// fallback
+    check "if (map[v]) ctx.send(map[v])" in chrome
+
+  test "Space pauses playback on the shipped page":
+    # index.html is the ONLY page this repo ships (Dockerfile.replay-viewer
+    # builds it from replay_broadcast.html), so its own keydown IS the whole
+    # Space contract here: there is no shell frame that would have to forward
+    # the key down a command channel instead.
+    check "function togglePlay() { send(' '); }" in page
+    check "if (k === ' ') { ev.preventDefault(); togglePlay(); }" in page
+    check "$('btn-play').addEventListener('click', togglePlay);" in page
 
   test "relayout() and the three CSS variables are the starter's":
     check "function relayout()" in page
