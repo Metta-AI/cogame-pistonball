@@ -703,7 +703,7 @@ proc runServerLoop*(
               # hosted replay.
               body.addSprite(BroadcastChromeSpriteId, 1, 1, [0'u8, 0, 0, 0],
                 sim.buildStateJson(frameEvents, true,
-                  playbackSpeed(liveSpeedIndex), sim.effectiveMaxTicks(),
+                  float(playbackSpeed(liveSpeedIndex)), sim.effectiveMaxTicks(),
                   false, false, -1, nextState.selectedPiston))
             body
       if packet.len == 0:

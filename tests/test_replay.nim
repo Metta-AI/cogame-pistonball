@@ -181,6 +181,59 @@ suite "the replay":
     check seekSim.llmTurns[0] == turnsPerSeat
     check seekSim.fallbackTurns[1] == turnsPerSeat
 
+  test "1/2x is a replay-only crawl the chrome can see":
+    # The fleet-wide half speed: command '5' selects ReplayHalfSpeedIndex, the
+    # chrome's `sp` reads 0.5, and the step budget spends one tick every OTHER
+    # frame. `replaySpeed` stays an integer 1 so the LIVE loop, which indexes
+    # PlaybackSpeeds, can never be dragged below real time.
+    var replay = ReplayPlayer()
+    replay.speedIndex = 0
+    applySpeedCommand(replay.speedIndex, '5')
+    check replay.speedIndex == ReplayHalfSpeedIndex
+    check replay.replayDisplaySpeed() == 0.5
+    check replay.replaySpeed() == 1
+
+    replay.skipLulls = false
+    replay.halfPhase = false
+    check replay.replayStepBudget(0) == 0      # even frame: nothing spent
+    replay.halfPhase = true
+    check replay.replayStepBudget(0) == 1      # odd frame: one tick
+
+    # 1/2x is the FLOOR of the '-' ramp, and '+' climbs straight back to 1x.
+    applySpeedCommand(replay.speedIndex, '+')
+    check replay.speedIndex == 0
+    applySpeedCommand(replay.speedIndex, '-')
+    check replay.speedIndex == ReplayHalfSpeedIndex
+    applySpeedCommand(replay.speedIndex, '-')
+    check replay.speedIndex == ReplayHalfSpeedIndex
+
+    # Every other speed still reports its own integer, so the chip the chrome
+    # lights up is the one the engine is actually running.
+    for (command, want) in [('1', 1.0), ('2', 2.0), ('3', 3.0), ('4', 4.0),
+                            ('8', 8.0), ('6', 16.0)]:
+      checkpoint($command)
+      applySpeedCommand(replay.speedIndex, command)
+      check replay.replayDisplaySpeed() == want
+
+  test "the half-speed parity counts frames, and '5' rides the command path":
+    # applyReplayCommand is what the viewer's keystrokes and speed chips reach,
+    # so '5' has to be in ITS dispatch set too — not just applySpeedCommand's.
+    var config = testConfig()
+    var sim = initSimServer(config)
+    var replay = ReplayPlayer()
+    replay.speedIndex = 3
+    replay.applyReplayCommand(sim, '5')
+    check replay.speedIndex == ReplayHalfSpeedIndex
+
+    # The parity flips once per advanceReplayPlayback frame, whatever else the
+    # frame did, so half speed is exactly half of real time.
+    replay.playing = false
+    let before = replay.halfPhase
+    replay.advanceReplayPlayback(sim, proc () = discard, proc () = discard)
+    check replay.halfPhase != before
+    replay.advanceReplayPlayback(sim, proc () = discard, proc () = discard)
+    check replay.halfPhase == before
+
   test "tools/replay_summary.py parses under a STRICT UTF-8 JSON parser":
     let path = getTempDir() / "pistonball-test.replay"
     discard recordEpisode(path)

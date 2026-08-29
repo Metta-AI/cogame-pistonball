@@ -20,7 +20,10 @@ proc jsIntArray(values: openArray[int]): string =
   result.add "]"
 
 const WireConstantsJs* =
-  "window.PISTONBALL_WIRE={speeds:" & jsIntArray(PlaybackSpeeds) &
+  # 0.5 rides ahead of the engine's integer `PlaybackSpeeds`: it is the
+  # replay-only half speed (`ReplayHalfSpeedIndex`, command '5'), which has no
+  # slot in an int array because it is a frame parity, not a tick multiplier.
+  "window.PISTONBALL_WIRE={speeds:[0.5," & jsIntArray(PlaybackSpeeds)[1..^1] &
   ",fps:" & $TargetFps &
   ",chromeSpriteId:" & $BroadcastChromeSpriteId &
   ",pistons:" & $PistonCount &
