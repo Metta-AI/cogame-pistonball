@@ -32,3 +32,25 @@ The local 10-game default and sprint exports each contained 160 training and
 4096-token model context. A one-step CPU optimizer smoke reduced held-out loss
 from 5.5833 to 5.5089 (default) and 5.5254 to 5.4587 (sprint). This distills
 the scripted teacher; it does not establish stronger league play.
+
+## Numeric training
+
+The persistent bridge covers Default and Sprint. It exposes 66 fixed numeric
+features from the exact `windowView` seen by each piston. Local ball sightings,
+neighbour heights, shared last-turn reward, and the seat's own last script are
+included. The bridge snapshots all twenty views before applying any scripts.
+Eight factorized heads encode mode, trigger distance, lead ticks, three height
+targets, speed, and blind behavior. Distances use centimetre steps; the
+production reply parser, controller, and simulator execute each action. Every
+seat receives the same game score and a bounded utility for learning.
+
+```sh
+nim c -d:release --path:src -o:/tmp/pistonball-train-bridge tools/train_bridge.nim
+python3 tools/test_train_bridge.py /tmp/pistonball-train-bridge
+```
+
+From Metta, use `recipes.external.coworld_metta_rl.train` or
+`recipes.external.coworld.train` with command
+`["/tmp/pistonball-train-bridge", "<source>/coworld_manifest_template.json", "default"]`
+and `players=20`. Replace `default` with `sprint` for the second variant.
+Set a finite timestep limit for either trainer.
