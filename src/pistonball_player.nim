@@ -1,17 +1,11 @@
-## The pistonball player container: a policy is just a prompt.
-##
-## This process is DELIBERATELY thin. It connects to its seat, sends ONE
-## Sprite v1 chat message carrying its registration, and then only receives.
-## Every decision happens inside the GAME server, because that is the only
-## container the platform injects the `anthropic_api_key` coworld secret into,
-## and because keeping the control layer server-side is what makes the
-## recorded command-byte log reproducible with no network in the loop.
+## The pistonball player container registers and answers private decision views.
 ##
 ##   PLAYER_PROMPT        a strategy in plain English -> this seat is an LLM seat
+##   PLAYER_JEV=true      Jev mode choice             -> this seat is a Jev seat
 ##   PLAYER_SCRIPTED      wavebot | metronome         -> this seat is scripted
 ##   PLAYER_POLICY_LABEL  a free label for the replay's `register` record
 ##
-## A seat that sets neither is `wavebot`. To field your own policy, reuse this
+## A seat that sets neither is `wavebot`. To field a prompt policy, reuse this
 ## image and set PLAYER_PROMPT:
 ##
 ##   coworld upload-policy coworld-pistonball:latest --name my-pistonball \
@@ -20,7 +14,9 @@
 import
   std/[json, options, os, strutils],
   bitworld/spriteprotocol,
-  whisky
+  curly,
+  whisky,
+  pistonball/[llm, scripts, sim_config, jev_policy]
 
 const
   ConnectAttempts = 240      ## 240 x 500 ms = 2 minutes of dialling.
@@ -30,13 +26,13 @@ const
   ReconnectAttempts = 6      ## 6 x 500 ms of re-dialling after a live socket
                              ## dies, before accepting the game is gone.
 
-proc registrationBlob(prompt, scripted, policy: string): string =
+proc registrationBlob(kind, scripted, policy: string): string =
   ## The one registration message. `scripted` is JSON null when the seat is an
   ## LLM seat, so the server can tell "no baseline named" from "wavebot named
   ## explicitly".
   var node = %*{
     "type": "register",
-    "prompt": prompt,
+    "kind": kind,
     "policy": policy
   }
   if scripted.len > 0:
@@ -61,14 +57,18 @@ when isMainModule:
   let
     prompt = getEnv("PLAYER_PROMPT").strip()
     scripted = getEnv("PLAYER_SCRIPTED").strip()
+    kind = if getEnv("PLAYER_JEV").strip() == "true": "jev"
+      elif prompt.len > 0: "prompt"
+      else: "scripted"
     label = block:
       let explicit = getEnv("PLAYER_POLICY_LABEL").strip()
       if explicit.len > 0: explicit
-      elif prompt.len > 0: "prompt"
+      elif kind == "jev": "jev"
+      elif kind == "prompt": "prompt"
       elif scripted.len > 0: scripted
       else: "wavebot"
   echo "pistonball player: kind=",
-    (if prompt.len > 0: "llm" else: "scripted"),
+    kind,
     " baseline=", (if scripted.len > 0: scripted else: "wavebot"),
     " label=", label
 
@@ -90,6 +90,8 @@ when isMainModule:
   if socket == nil:
     quit("pistonball player: game never accepted a connection", 1)
   echo "pistonball player: connected"
+  let client = if kind == "prompt": newLlmClient(defaultGameConfig())
+    else: nil
 
   # Each session is wrapped: whisky's receiveMessage RAISES on a close frame
   # or a truncated read (only a timeout returns none), and mummy's send only
@@ -110,17 +112,51 @@ when isMainModule:
   while true:
     var sessionFrames = 0
     try:
-      socket.send(registrationBlob(prompt, scripted, label), BinaryMessage)
+      socket.send(registrationBlob(kind, scripted, label), BinaryMessage)
       var resends = 0
       while true:
         let received = socket.receiveMessage()
         if received.isNone:
           continue                    ## a read timeout, not a closed socket
+        if received.get().kind == TextMessage:
+          let decision = parseJson(received.get().data)
+          if decision{"type"}.getStr() == "decision":
+            var reply = %*{"type": "action", "id": decision["id"]}
+            let timeoutSeconds = decision["timeout_seconds"].getInt()
+            if kind == "prompt" and client.disabled or
+                kind == "jev" and not jevConfigured():
+              reply["cause"] = %"no_credentials"
+              reply["error"] = %"no_credentials"
+            else:
+              try:
+                if kind == "jev":
+                  reply["action"] = chooseJevAction(decision["view"],
+                    decision["seat"].getInt(), timeoutSeconds)
+                else:
+                  client.throttled = false
+                  var user = userMessage(prompt, $decision["view"])
+                  if decision["retry"].getBool():
+                    user.add("\n\nYour previous reply was unusable. Return only JSON.")
+                  let request = client.requestFor(
+                    decision["system"].getStr(), user)
+                  let response = client.curl.post(request.url,
+                    request.headers, request.body, timeoutSeconds)
+                  reply["action"] = extractJsonObject(
+                    client.textOf(response, "", request.url))
+              except ScriptError as error:
+                reply["cause"] = %"parse_error"
+                reply["error"] = %error.msg
+              except CatchableError as error:
+                reply["cause"] = %(if kind == "prompt" and client.throttled:
+                    "throttled" else: "transport_error")
+                reply["error"] = %error.msg
+            socket.send($reply, TextMessage)
+          continue
         inc sessionFrames
         if resends < RegistrationResends and
             sessionFrames mod ResendEveryFrames == 1:
           inc resends
-          socket.send(registrationBlob(prompt, scripted, label), BinaryMessage)
+          socket.send(registrationBlob(kind, scripted, label), BinaryMessage)
         socket.send(readyBlob(), BinaryMessage)
     except CatchableError as error:
       echo "pistonball player: socket closed (", error.msg, ")"

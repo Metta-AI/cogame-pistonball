@@ -13,14 +13,14 @@ import
 suite "the server contract":
   test "a registration frame is parsed; anything else is not a registration":
     let good = parseRegistration(
-      "{\"type\":\"register\",\"prompt\":\"roll it left\"," &
+      "{\"type\":\"register\",\"kind\":\"prompt\"," &
       "\"scripted\":null,\"policy\":\"swell\"}")
     check good.ok
-    check good.prompt == "roll it left"
+    check good.kind == "prompt"
     check good.scripted == ""
     check good.policy == "swell"
     let scripted = parseRegistration(
-      "{\"type\":\"register\",\"prompt\":\"\",\"scripted\":\"metronome\"," &
+      "{\"type\":\"register\",\"kind\":\"scripted\",\"scripted\":\"metronome\"," &
       "\"policy\":\"filler\"}")
     check scripted.ok
     check scripted.scripted == "metronome"
@@ -29,16 +29,13 @@ suite "the server contract":
     check not parseRegistration("{\"type\":\"shout\",\"text\":\"hi\"}").ok
     check not parseRegistration("").ok
 
-  test "a prompt over 4000 runes is TRUNCATED, never rejected":
-    var long = ""
-    for _ in 0 ..< 5000:
-      long.add("\u00e9")                 # a two-byte rune, so bytes != runes
+  test "Jev registers as an ordinary model policy":
     let registration = parseRegistration(
-      $(%*{"type": "register", "prompt": long, "policy": "long"}))
+      "{\"type\":\"register\",\"kind\":\"jev\",\"policy\":\"jev\"}")
     check registration.ok
-    let stored = registration.prompt.truncateRunes(MaxPromptRunes)
-    check stored.runeLen == MaxPromptRunes
-    check stored.validateUtf8() == -1
+    check registration.kind == "jev"
+    check not parseRegistration(
+      "{\"type\":\"register\",\"kind\":\"unknown\"}").ok
 
   test "the register record is REDACTED: the prompt never reaches the replay":
     let record = registerRecord(0, 13, alias(13), "swell", "llm", "wavebot")

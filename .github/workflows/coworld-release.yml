@@ -15,7 +15,7 @@
 # put` MUST come after upload-coworld, because the secret namespace does not
 # exist until the Coworld does.
 #
-# Repo secrets required: SOFTMAX_TOKEN, ANTHROPIC_API_KEY (set by coworld-builder's propagate-secrets.yml).
+# Repo secret required: SOFTMAX_TOKEN (set by coworld-builder's propagate-secrets.yml).
 #
 # The agent reads the outcome back with:
 #   gh run download <run_id> -R Metta-AI/cogame-pistonball -n release-result \
@@ -36,16 +36,6 @@ on:
         required: false
         default: ""
         type: string
-      secret_key_name:
-        description: "Coworld secret key to write ANTHROPIC_API_KEY into"
-        required: false
-        default: "anthropic_api_key"
-        type: string
-      put_secret:
-        description: "Write the ANTHROPIC_API_KEY Coworld secret after upload"
-        required: false
-        default: true
-        type: boolean
       skip_certify:
         description: "Skip local certification (debugging only; never for a real release)"
         required: false
@@ -264,6 +254,10 @@ jobs:
                   cmd = ["uvx", "--from", pkg, "coworld", "upload-policy", image, "--name", name]
                   for token in argv:
                       cmd += ["--run", token]
+                  if "PLAYER_PROMPT" in (row.get("env") or {}):
+                      cmd += ["--use-bedrock", "--bedrock-model", "anthropic/claude-haiku-4.5"]
+                  elif "PLAYER_JEV" in (row.get("env") or {}):
+                      cmd += ["--use-bedrock", "--bedrock-model", "typesafe/jev-1.13"]
                   for key, value in (row.get("env") or {}).items():
                       cmd += ["--secret-env", f"{key}={value}"]
                   # The command is NOT echoed: --secret-env values are policy secrets.
@@ -351,32 +345,6 @@ jobs:
               raise SystemExit(f"upload-coworld exited {rc}")
           PY
 
-      - name: Put the Coworld secret
-        # AFTER upload-coworld: the secret namespace is the Coworld's.
-        if: ${{ inputs.put_secret != false }}
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          SECRET_KEY_NAME: ${{ inputs.secret_key_name }}
-        run: |
-          set -euo pipefail
-          echo "Put the Coworld secret" > "$RR/current_step"
-          if [ -z "${ANTHROPIC_API_KEY}" ]; then
-            echo "::error::ANTHROPIC_API_KEY secret is not set on this repo (dispatch propagate-secrets.yml in Metta-AI/coworld-builder)"
-            exit 1
-          fi
-          # The Coworld is named by the manifest's game.name, which can differ
-          # from the repo slug (factory_commons vs factory-commons); $SLUG 404s there.
-          coworld_name="$(python3 -c 'import json;print(json.load(open("dist/coworld_manifest.json"))["game"]["name"])')"
-          echo "coworld name: $coworld_name"
-          secret_file="$(mktemp)"
-          chmod 600 "$secret_file"
-          printf '%s' "${ANTHROPIC_API_KEY}" > "$secret_file"
-          uvx --from "$COWORLD_PKG" coworld secret put \
-            "$coworld_name" "${SECRET_KEY_NAME}" "$secret_file"
-          rm -f "$secret_file"
-          uvx --from "$COWORLD_PKG" coworld secret list "$coworld_name"
-          echo '{"ok": true}' > "$RR/secret.json"
-
       - name: Assemble release-result.json
         if: always()
         env:
@@ -402,7 +370,6 @@ jobs:
           upload = load("upload.json", {})
           policies = load("policies.json", [])
           policy_errors = load("policy_errors.json", [])
-          secret = load("secret.json", None)
           current_step = ""
           step_path = os.path.join(rr, "current_step")
           if os.path.exists(step_path):
@@ -443,7 +410,6 @@ jobs:
                   "output_tail": certify.get("output_tail"),
               },
               "policies": policies,
-              "secret_put": bool(secret and secret.get("ok")),
               "errors": errors,
               "step_failed": None if job_status == "success" else (current_step or None),
           }
@@ -462,7 +428,6 @@ jobs:
               f"| canonical | **{canonical_raw or 'unknown'}** |",
               f"| hosted smoke | {result['hosted_smoke'] or 'not reported'} |",
               f"| replay liveness | {(certify or {}).get('replay_liveness') or 'not certified'} |",
-              f"| secret put | {result['secret_put']} |",
               "",
               "### Policies",
               "",

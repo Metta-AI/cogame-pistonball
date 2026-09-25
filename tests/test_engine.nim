@@ -1,13 +1,11 @@
 ## The turn loop: batching, bounded waits, the budget guard and the fallbacks.
 ##
-## The LLM client is exercised WITHOUT credentials, which is exactly the state
-## certification runs in: the client disables itself and every turn falls back
-## to the scripted layer instantly, with no network wait.
+## The player-response batch is exercised with typed no-credential replies,
+## matching the state certification runs in.
 
 import
   std/[json, monotimes, os, strutils, times, unittest],
-  curly,
-  ../src/pistonball/[sim, roster, scripts, control, baselines, decide, llm],
+  ../src/pistonball/[sim, roster, scripts, control, baselines, decide],
   ./helpers
 
 proc llmEngine(game: SimServer): DecisionEngine =
@@ -15,8 +13,11 @@ proc llmEngine(game: SimServer): DecisionEngine =
   for seat in 0 ..< result.seats.len:
     result.seats[seat].isLlm = true
     result.seats[seat].registered = true
-    result.seats[seat].prompt = "be the shoulder the ball rolls off"
     result.seats[seat].label = "prompt"
+  result.batch = proc(calls: seq[BatchCall], timeoutSeconds: int): seq[BatchReply] =
+    for call in calls:
+      result.add(BatchReply(seat: call.seat, cause: "no_credentials",
+        error: "no_credentials"))
 
 # ---------------------------------------------------------------------------
 #  A FAKE PROVIDER.
@@ -45,51 +46,43 @@ const GoodScript = """{"note":"lift behind it","mode":"wave",""" &
   """"trigger_m":0.8,"lead_ticks":6,"up_m":1.45,"down_m":0.1,""" &
   """"idle_m":0.25,"speed":1.0,"blind":"idle","say":"up behind it"}"""
 
-proc anthropicBody(text: string): string =
-  $(%*{"stop_reason": "end_turn",
-       "content": [{"type": "text", "text": text}]})
-
 proc newFakeProvider(
   bodies: seq[string], delayMs = 0, code = 200
 ): FakeProvider =
   FakeProvider(delayMs: delayMs, code: code, bodyForAttempt: bodies,
     origin: getMonoTime())
 
-proc fakeClient(provider: FakeProvider): LlmClient =
-  ## An LlmClient that never opens a socket. `transport` is set so the turn
-  ## loop treats it as live; `curl` stays nil and is never touched.
+proc fakeBatch(provider: FakeProvider): BatchFn =
   let fake = provider
-  result = LlmClient(transport: ltAnthropic, model: "fake-haiku",
-    maxOutputTokens: 900)
-  result.sendBatch = proc(
-    batch: RequestBatch, timeoutSeconds: int
-  ): ResponseBatch {.gcsafe, raises: [].} =
+  result = proc(calls: seq[BatchCall], timeoutSeconds: int): seq[BatchReply]
+      {.closure, gcsafe.} =
     let startMs = (getMonoTime() - fake.origin).inMilliseconds.int
     if fake.delayMs > 0:
       sleep(fake.delayMs)
     let attempt = fake.batches.len
     let body = fake.bodyForAttempt[min(attempt, fake.bodyForAttempt.high)]
     var tags: seq[string]
-    for i in 0 ..< batch.len:
-      tags.add(batch[i].tag)
-      result.add((
-        response: Response(code: fake.code, url: batch[i].url, body: body),
-        error: ""))
-    fake.batches.add(FakeBatch(size: batch.len, tags: tags, startMs: startMs,
+    for call in calls:
+      tags.add($call.seat)
+      if fake.code == 429:
+        result.add(BatchReply(seat: call.seat, cause: "throttled",
+          error: "provider throttled"))
+      else:
+        result.add(BatchReply(seat: call.seat, ok: true, action: body))
+    fake.batches.add(FakeBatch(size: calls.len, tags: tags,
+      startMs: startMs,
       endMs: (getMonoTime() - fake.origin).inMilliseconds.int))
 
 suite "the decision turn":
   setup:
     delEnv("ANTHROPIC_API_KEY")
-    delEnv("ANTHROPIC_API_KEY_URI")
-    delEnv("AWS_BEARER_TOKEN_BEDROCK")
     delEnv("AWS_ENDPOINT_URL_BEDROCK_RUNTIME")
 
   test "with no credentials every one of the twenty seats falls back in ONE turn":
     var game = seatedSim(testConfig())
     game.phase = Playing
     var engine = llmEngine(game)
-    check engine.client.disabled
+    check engine.batch != nil
     let records = engine.turn(game, 0, 0)
     var seatsSeen: seq[int]
     for record in records:
@@ -107,6 +100,7 @@ suite "the decision turn":
   test "a turn with no credentials costs no wall clock at all":
     var game = seatedSim(testConfig())
     game.phase = Playing
+    game.config.minBatchSpacingMs = 45000
     var engine = llmEngine(game)
     let started = epochTime()
     for turn in 0 ..< 8:
@@ -154,8 +148,8 @@ suite "the decision turn":
     var game = seatedSim(testConfig())
     game.phase = Playing
     var engine = llmEngine(game)
-    let provider = newFakeProvider(@[anthropicBody(GoodScript)])
-    engine.client = fakeClient(provider)
+    let provider = newFakeProvider(@[GoodScript])
+    engine.batch = fakeBatch(provider)
     let records = engine.turn(game, 0, 0)
     check provider.batches.len == 1
     check provider.batches[0].size == 20
@@ -189,8 +183,8 @@ suite "the decision turn":
     game.phase = Playing
     game.config.minBatchSpacingMs = 250
     var engine = llmEngine(game)
-    let provider = newFakeProvider(@[anthropicBody(GoodScript)])
-    engine.client = fakeClient(provider)
+    let provider = newFakeProvider(@[GoodScript])
+    engine.batch = fakeBatch(provider)
     discard engine.turn(game, 0, 0)
     discard engine.turn(game, 1, 0)
     check provider.batches.len == 2
@@ -209,8 +203,8 @@ suite "the decision turn":
     game.config.turnBudgetMs = 200
     check game.config.minBatchSpacingMs > game.config.turnBudgetMs
     var engine = llmEngine(game)
-    let provider = newFakeProvider(@[anthropicBody(GoodScript)])
-    engine.client = fakeClient(provider)
+    let provider = newFakeProvider(@[GoodScript])
+    engine.batch = fakeBatch(provider)
     discard engine.turn(game, 0, 0)
     let records = engine.turn(game, 1, 0)
     # Turn 1 waited out the rate floor AND still issued its batch…
@@ -232,8 +226,8 @@ suite "the decision turn":
     var engine = llmEngine(game)
     # Answers, but far too late to be worth a retry.
     let provider = newFakeProvider(
-      @[anthropicBody("I am thinking about it")], delayMs = 500)
-    engine.client = fakeClient(provider)
+      @["I am thinking about it"], delayMs = 500)
+    engine.batch = fakeBatch(provider)
     let started = epochTime()
     let records = engine.turn(game, 0, 0)
     let elapsed = epochTime() - started
@@ -256,9 +250,9 @@ suite "the decision turn":
     game.phase = Playing
     var engine = llmEngine(game)
     let provider = newFakeProvider(@[
-      anthropicBody("I am sorry, I cannot help with that."),
-      anthropicBody(GoodScript)])
-    engine.client = fakeClient(provider)
+      "I am sorry, I cannot help with that.",
+      GoodScript])
+    engine.batch = fakeBatch(provider)
     let records = engine.turn(game, 0, 0)
     check provider.batches.len == 2
     check provider.batches[1].size == 20
@@ -276,8 +270,8 @@ suite "the decision turn":
     var game = seatedSim(testConfig())
     game.phase = Playing
     var engine = llmEngine(game)
-    let provider = newFakeProvider(@[anthropicBody("no object here, ever")])
-    engine.client = fakeClient(provider)
+    let provider = newFakeProvider(@["no object here, ever"])
+    engine.batch = fakeBatch(provider)
     let records = engine.turn(game, 0, 0)
     check provider.batches.len == 2
     var finals: seq[int]
@@ -297,12 +291,11 @@ suite "the decision turn":
     game.phase = Playing
     var engine = llmEngine(game)
     let provider = newFakeProvider(@["{\"message\":\"slow down\"}"], code = 429)
-    engine.client = fakeClient(provider)
+    engine.batch = fakeBatch(provider)
     let records = engine.turn(game, 0, 0)
     # One batch, no second: the only candidate model answered 429, so a retry
     # inside the same turn cannot land and would burn the whole turn budget.
     check provider.batches.len == 1
-    check engine.client.throttled
     var throttled = 0
     for record in records:
       let node = parseJson(record)

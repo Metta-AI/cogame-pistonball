@@ -54,3 +54,13 @@ From Metta, use `recipes.external.coworld_metta_rl.train` or
 `["/tmp/pistonball-train-bridge", "<source>/coworld_manifest_template.json", "default"]`
 and `players=20`. Replace `default` with `sprint` for the second variant.
 Set a finite timestep limit for either trainer.
+
+## Hosted player policies
+
+The numeric bridge is for training; deployed prompt and Jev policies use the
+normal player socket. The game sends the same private `windowView` to each
+seat. Prompt policies request `/v1/messages`; Jev chooses a mode through
+`/v1/systemone` and returns the same full PistonScript. The game owns parsing,
+fallback, control, scoring, and replay. Upload either policy with
+`--use-bedrock --bedrock-model anthropic/claude-haiku-4.5` or
+`--use-bedrock --bedrock-model typesafe/jev-1.13`, respectively.

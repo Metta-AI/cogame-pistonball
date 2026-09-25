@@ -1,35 +1,13 @@
-## Claude-backed piston programs. A policy is just a prompt: the game server
-## composes the seat's OWN one-metre window plus that seat's PLAYER_PROMPT and
-## asks Claude what its piston does for the next 9.4 seconds.
-##
-## Ported from `coworld-ctf/src/ctf/llm.nim` behaviour for behaviour — the
-## credential ladder, the single-model list, the fence-tolerant JSON
-## extraction and the rune-boundary truncation are all that file's, because
-## they are all scar tissue from real hosted failures.
-##
-## Pistonball is a SIMULTANEOUS-decision game, so ALL TWENTY seats' calls go
-## out as ONE parallel batch per turn (`curly.makeRequests`). Seats are never
-## queried sequentially: that is what keeps eight turns inside the wall-clock
-## budget with twenty seats.
-##
-## Credentials, in order of preference:
-##   Bedrock sidecar (AWS_ENDPOINT_URL_BEDROCK_RUNTIME + AWS_BEARER_TOKEN_BEDROCK)
-##   ANTHROPIC_API_KEY
-##   ANTHROPIC_API_KEY_URI
-## With none of them the client disables itself and every turn falls back to
-## the scripted layer INSTANTLY, with no network wait — which is what lets
-## offline certification finish in seconds.
+## Prompt inference in the ordinary player container.
 
 import
   std/[json, os, strutils],
-  bitworld/runtime,
   curly,
   ./sim_types, ./scripts
 
 const
   AnthropicUrl = "https://api.anthropic.com/v1/messages"
   AnthropicVersion = "2023-06-01"
-  BedrockAnthropicVersion = "bedrock-2023-05-31"
 
 type
   LlmTransport* = enum
@@ -40,70 +18,16 @@ type
     transport*: LlmTransport
     apiKey: string
     bedrockEndpoint: string
-    bedrockModels: seq[string]
-    bedrockModel: int
-    bedrockToken: string
     model*: string
     maxOutputTokens*: int
     disabled*: bool
-    sendBatch*: proc(batch: RequestBatch, timeoutSeconds: int): ResponseBatch
-      {.gcsafe, raises: [].}
-      ## The ONE call that leaves the process, behind a seam. `nil` in every
-      ## build the server runs: `newLlmClient` never sets it and `sendTurnBatch`
-      ## falls through to `curl.makeRequests`. It exists because the turn loop's
-      ## contract — twenty seats in ONE batch, one retry and no more, a batch
-      ## the throttle cancels, a hung provider that still hands the turn back
-      ## inside `turnBudgetMs` — is not observable from outside the process, and
-      ## a test that cannot fake the provider can only assert that a
-      ## credential-less client does nothing.
     throttled*: bool
-      ## The provider answered 429 and there is no other candidate model to
-      ## rotate to. Set per turn, cleared by the turn loop: retrying inside
-      ## the same turn cannot succeed, so the seat fails fast to the scripted
-      ## fallback instead of spending the turn budget — and with TWENTY seats
-      ## a pointless retry batch would burn the whole turn.
+      ## A 429 ends this seat's attempt without retrying the same turn.
 
   LlmError* = object of ValueError
 
 proc resolveApiKey(): string =
-  result = getEnv("ANTHROPIC_API_KEY").strip()
-  if result.len > 0:
-    return
-  let uri = getEnv("ANTHROPIC_API_KEY_URI").strip()
-  if uri.len == 0:
-    return ""
-  try:
-    result = readCogameUri(uri, "ANTHROPIC_API_KEY_URI").strip()
-  except CatchableError as error:
-    echo "pistonball llm: failed to fetch ANTHROPIC_API_KEY_URI: ", error.msg
-    result = ""
-
-proc bedrockModelIds(): seq[string] =
-  ## Bedrock inference-profile candidates, tried in order; BEDROCK_MODEL pins
-  ## one. There is exactly ONE candidate — haiku — because every sonnet
-  ## inference profile times out on every sidecar call (cogame-raid round 2,
-  ## 2026-08-23; the paintbot starter's 0.1.2 release recorded 133 consecutive
-  ## timeouts against one). With no second candidate a throttle fails fast (see
-  ## `LlmClient.throttled`) and the seat plays the scripted fallback for that
-  ## turn only.
-  let pinned = getEnv("BEDROCK_MODEL").strip()
-  if pinned.len > 0:
-    return @[pinned]
-  @["us.anthropic.claude-haiku-4-5-20251001-v1:0"]
-
-proc tryNextBedrockModel(client: LlmClient, why: string): bool =
-  if client.transport != ltBedrock or
-      client.bedrockModel + 1 >= client.bedrockModels.len:
-    return false
-  client.bedrockModel.inc
-  echo "pistonball llm: ", client.bedrockModels[client.bedrockModel - 1],
-    " unusable (", why, "); falling back to ",
-    client.bedrockModels[client.bedrockModel]
-  true
-
-proc bedrockUrl(client: LlmClient): string =
-  client.bedrockEndpoint & "/model/" &
-    client.bedrockModels[client.bedrockModel] & "/invoke"
+  getEnv("ANTHROPIC_API_KEY").strip()
 
 proc newLlmClient*(config: GameConfig): LlmClient =
   result = LlmClient(
@@ -111,21 +35,13 @@ proc newLlmClient*(config: GameConfig): LlmClient =
             else: "claude-haiku-4-5-20251001"),
     maxOutputTokens: max(1, config.maxOutputTokens)
   )
-  let
-    bedrockEndpoint = getEnv("AWS_ENDPOINT_URL_BEDROCK_RUNTIME").strip()
-    bedrockToken = getEnv("AWS_BEARER_TOKEN_BEDROCK").strip()
-  if bedrockEndpoint.len > 0 or bedrockToken.len > 0:
-    let region = getEnv("AWS_REGION", getEnv("AWS_DEFAULT_REGION", "us-west-2"))
-    let endpoint =
-      if bedrockEndpoint.len > 0: bedrockEndpoint
-      else: "https://bedrock-runtime." & region & ".amazonaws.com"
+  let bedrockEndpoint = getEnv("AWS_ENDPOINT_URL_BEDROCK_RUNTIME").strip()
+  if bedrockEndpoint.len > 0:
     result.transport = ltBedrock
-    result.bedrockEndpoint = endpoint.strip(chars = {'/'}, leading = false)
-    result.bedrockModels = bedrockModelIds()
-    result.bedrockToken = bedrockToken
+    result.bedrockEndpoint = bedrockEndpoint.strip(chars = {'/'}, leading = false)
+    result.model = getEnv("BEDROCK_MODEL")
     result.curl = newCurly()
-    echo "pistonball llm: bedrock transport, model ",
-      result.bedrockModels[result.bedrockModel]
+    echo "pistonball llm: sidecar transport, model ", result.model
     return
   result.apiKey = resolveApiKey()
   if result.apiKey.len > 0:
@@ -151,31 +67,17 @@ proc requestFor*(
   }
   var headers: HttpHeaders
   headers["content-type"] = "application/json"
+  body["model"] = %client.model
   if client.transport == ltBedrock:
-    body["anthropic_version"] = %BedrockAnthropicVersion
-    if client.bedrockToken.len > 0:
-      headers["authorization"] = "Bearer " & client.bedrockToken
-    result.url = client.bedrockUrl()
+    result.url = client.bedrockEndpoint & "/v1/messages"
   else:
-    body["model"] = %client.model
-    ## Only the Claude 5 / Opus tiers accept an effort setting; Haiku 4.5
-    ## rejects the whole request with a 400 if it is present.
     if "haiku" notin client.model and "4-5" notin client.model:
       body["output_config"] = %*{"effort": "low"}
     headers["x-api-key"] = client.apiKey
-    headers["anthropic-version"] = AnthropicVersion
     result.url = AnthropicUrl
+  headers["anthropic-version"] = AnthropicVersion
   result.headers = headers
   result.body = $body
-
-proc sendTurnBatch*(
-  client: LlmClient, batch: RequestBatch, timeoutSeconds: int
-): ResponseBatch =
-  ## Issue one turn's whole batch and block until every request has answered
-  ## or failed. `curly.makeRequests` unless a `sendBatch` seam is installed.
-  if client.sendBatch != nil:
-    return client.sendBatch(batch, timeoutSeconds)
-  client.curl.makeRequests(batch, timeoutSeconds)
 
 proc textOf*(
   client: LlmClient, response: Response, error, url: string
@@ -192,19 +94,13 @@ proc textOf*(
     ## half, and truncateRunes downstream only SHORTENS — it cannot repair a
     ## broken one.
     let detail = response.body.truncateRunes(MaxFallbackDetailRunes)
-    if "Model access is denied" in response.body and
-        client.tryNextBedrockModel("no model access"):
-      raise newException(LlmError, "bedrock model access denied: " & detail)
     client.disabled = true
     raise newException(
       LlmError,
       "llm auth failed (" & $response.code & ") at " & url & ": " & detail)
   if response.code == 429:
     let detail = response.body.truncateRunes(MaxFallbackDetailRunes)
-    if not client.tryNextBedrockModel("throttled"):
-      ## Nothing left to rotate to: a second call this turn would be refused
-      ## the same way, so the turn loop must not spend its retry on it.
-      client.throttled = true
+    client.throttled = true
     raise newException(LlmError, "llm throttled (429): " & detail)
   if response.code < 200 or response.code >= 300:
     raise newException(LlmError, "anthropic error " & $response.code & ": " &

@@ -31,5 +31,13 @@
       "PLAYER_SCRIPTED": "metronome",
       "PLAYER_POLICY_LABEL": "metronome"
     }
+  },
+  {
+    "name": "pistonball-jev",
+    "run": "/bin/pistonball-player",
+    "env": {
+      "PLAYER_JEV": "true",
+      "PLAYER_POLICY_LABEL": "jev"
+    }
   }
 ]

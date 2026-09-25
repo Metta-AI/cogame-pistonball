@@ -115,8 +115,7 @@ suite "the manifest":
     check manifest["episode_timeout_minutes"].getInt == 20
     check manifest["game"]["runnable"]["image"].getStr() == "{{PISTONBALL_IMAGE}}"
     check manifest["game"]["runnable"]["run"][0].getStr() == "/bin/pistonball"
-    check manifest["game"]["runnable"]["env"]["ANTHROPIC_API_KEY_URI"].getStr() ==
-      "secret://coworld/pistonball/anthropic_api_key"
+    check not manifest["game"]["runnable"].hasKey("env")
     check manifest["player"][0]["run"][0].getStr() == "/bin/pistonball-player"
     check manifest["player"][0]["image"].getStr() == "{{PISTONBALL_IMAGE}}"
     # The upload validator rejects a player cpu limit below one core:
@@ -139,7 +138,7 @@ suite "the manifest":
       global = manifest["game"]["protocols"]["global"]["value"].getStr()
     check player != global
     for needle in ["/player?slot=", "\"type\":\"register\"",
-                   "SEATS SEND NO INPUTS", "covers_pistons"]:
+                   "text action message", "covers_pistons"]:
       checkpoint(needle)
       check needle in player
       check needle notin global
@@ -205,8 +204,7 @@ suite "the manifest":
 
   test "the secret namespace equals game.name, and compose agrees on the image":
     let name = manifest["game"]["name"].getStr()
-    check "secret://coworld/" & name & "/anthropic_api_key" ==
-      manifest["game"]["runnable"]["env"]["ANTHROPIC_API_KEY_URI"].getStr()
+    check not manifest["game"]["runnable"].hasKey("env")
     let compose = readFile(root / "compose.yaml")
     check "  " & name & ":" in compose
     check "image: coworld-" & name & ":latest" in compose
@@ -237,9 +235,10 @@ suite "the manifest":
 
   test "tools/ci/policies.json is pistonball's own set, correctly shaped":
     let policies = parseJson(readFile(root / "tools" / "ci" / "policies.json"))
-    check policies.len == 4
+    check policies.len == 5
     var prompts = 0
     var scripted = 0
+    var jev = 0
     var owned = 0
     for policy in policies:
       check policy["name"].getStr().startsWith("pistonball-")
@@ -252,10 +251,13 @@ suite "the manifest":
         inc scripted
         check parseBaseline(policy["env"]["PLAYER_SCRIPTED"].getStr()) in
           {blWavebot, blMetronome}
+      if policy["env"].hasKey("PLAYER_JEV"):
+        inc jev
       if policy.hasKey("player"):
         inc owned
         check policy["player"].getStr() ==
           "ply_bac48eb1-662e-44f8-973d-f3e016dccf5d"
     check prompts == 2
     check scripted == 2
+    check jev == 1
     check owned == 1
