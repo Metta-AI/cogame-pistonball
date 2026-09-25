@@ -3,7 +3,7 @@
 ##
 ## Cadence: one turn every `turnTicks` (225 ticks = 9.375 s of sim time), 8
 ## turns per episode. At each turn the server builds ALL TWENTY seats' request
-## bodies and issues them as ONE parallel batch — pistonball is a
+## views and issues them as ONE parallel batch — pistonball is a
 ## simultaneous-decision game, so querying seats one after another would
 ## multiply the wall clock by twenty for no gain.
 ##
@@ -24,16 +24,30 @@
 ## `wavebot`'s.
 
 import
-  std/[json, math, monotimes, os, strutils, times],
-  curly,
-  ./sim, ./roster, ./scripts, ./control, ./baselines, ./llm
+  std/[json, math, monotimes, os, times],
+  ./sim, ./roster, ./scripts, ./control, ./baselines
 
 type
+  BatchCall* = object
+    seat*: int
+    view*: string
+    retry*: bool
+
+  BatchReply* = object
+    seat*: int
+    ok*: bool
+    action*: string
+    cause*: string
+    error*: string
+
+  BatchFn* = proc(calls: seq[BatchCall], timeoutSeconds: int): seq[BatchReply]
+    {.closure, gcsafe.}
+
   SeatPolicy* = object
     ## What one seat registered as. A seat that registers with neither field —
     ## or never registers at all — is `wavebot`.
     isLlm*: bool
-    prompt*: string
+    unavailable*: bool
     baseline*: Baseline
     label*: string
     registered*: bool
@@ -46,7 +60,7 @@ type
     vyUm*: int32
 
   DecisionEngine* = object
-    client*: LlmClient
+    batch*: BatchFn
     seats*: seq[SeatPolicy]
     scripts*: seq[PistonScript]
     haveScript*: seq[bool]
@@ -64,7 +78,6 @@ const
     ## and it is the only history it gets.
 
 proc initDecisionEngine*(sim: SimServer): DecisionEngine =
-  result.client = newLlmClient(sim.config)
   let seats = sim.seatCount()
   result.seats = newSeq[SeatPolicy](seats)
   result.scripts = newSeq[PistonScript](seats)
@@ -322,10 +335,6 @@ proc turn*(
   sim.turnStartProgressMilli = sim.progressMilli
   sim.turnStartPenaltyMilli = sim.penaltyMilli
   let budget = initDuration(milliseconds = max(1, sim.config.turnBudgetMs))
-  ## Throttle state is PER TURN: a 429 on turn k says nothing about turn k+1
-  ## (the sidecar's window may have rolled), so the flag is cleared here and
-  ## only suppresses this turn's retry.
-  engine.client.throttled = false
 
   # --- budget guard: settle EARLY rather than overrun -----------------------
   if not engine.llmOff:
@@ -343,7 +352,7 @@ proc turn*(
   var open: seq[int]
   for seat in 0 ..< engine.seats.len:
     if engine.seats[seat].isLlm and not engine.llmOff and
-        not engine.client.disabled:
+        not engine.seats[seat].unavailable:
       open.add(seat)
     elif engine.seats[seat].isLlm:
       # An LLM seat that CANNOT call the LLM this turn is a FALLBACK, not a
@@ -383,9 +392,9 @@ proc turn*(
 
   # --- up to two PARALLEL batches ------------------------------------------
   var attempt = 0
+  var lastCause = newSeq[string](engine.seats.len)
+  var failFast: seq[int]
   while open.len > 0 and attempt < 2:
-    if engine.client.disabled:
-      break
     if getMonoTime() - turnStart >= budget:
       for seat in open:
         result.add(fallbackRecord(
@@ -394,31 +403,23 @@ proc turn*(
       break
     let deadlineMs =
       if attempt == 0: sim.config.attempt1Ms else: sim.config.retryMs
-    var batch: RequestBatch
+    var calls: seq[BatchCall]
     for seat in open:
-      var user = $engine.windowView(sim, seat, turnIndex)
-      if attempt > 0:
-        user.add("\n\nYour previous reply was not usable. Reply with ONLY " &
-          "the JSON object described above, starting with '{'.")
-      let request = engine.client.requestFor(
-        SystemPrompt, userMessage(engine.seats[seat].prompt, user))
-      batch.post(request.url, request.headers, request.body, $seat)
+      calls.add BatchCall(seat: seat,
+        view: $engine.windowView(sim, seat, turnIndex), retry: attempt > 0)
     let started = getMonoTime()
-    # curly hands the deadline to CURLOPT_TIMEOUT, whose granularity is WHOLE
-    # SECONDS, so this conversion FLOORS — `sim_config.validate` rejects a
-    # sub-second value so the floor below is an identity.
-    let responses = engine.client.sendTurnBatch(
-      batch, max(1, deadlineMs div 1000))
+    let replies = engine.batch(calls, max(1, deadlineMs div 1000))
     let latency = (getMonoTime() - started).inMilliseconds.int
     var stillOpen: seq[int]
     for position, seat in open:
       var cause = "parse_error"
       try:
-        let text = engine.client.textOf(
-          responses[position].response, responses[position].error,
-          batch[position].url)
+        let reply = replies[position]
+        if not reply.ok:
+          cause = if reply.cause.len > 0: reply.cause else: "transport_error"
+          raise newException(ValueError, reply.error)
         var script = parsePistonScript(
-          extractJsonObject(text),
+          parseJson(reply.action),
           engine.scripts[seat],
           engine.haveScript[seat])
         script.source = srcLlm
@@ -426,39 +427,35 @@ proc turn*(
         engine.scripts[seat] = script
         engine.haveScript[seat] = true
       except CatchableError as error:
-        if responses[position].error.len > 0:
-          cause = (if "timeout" in responses[position].error.toLowerAscii():
-                     "timeout" else: "transport_error")
-        elif error.msg.startsWith("llm throttled"):
-          ## Name the throttle for what it is. Reporting a 429 as
-          ## `parse_error` is what made a hosted log unreadable.
-          cause = "throttled"
         result.add(fallbackRecord(turnIndex, seat, attempt + 1, cause,
           error.msg))
+        lastCause[seat] = cause
+        if cause == "no_credentials":
+          engine.seats[seat].unavailable = true
         echo "pistonball llm: seat ", seat, " attempt ", attempt + 1,
           " failed, falling back if it fails again: ", error.msg
         stillOpen.add(seat)
     open = stillOpen
     inc attempt
-    if engine.client.throttled and open.len > 0:
-      # FAIL FAST. The only model left answered 429, so the retry batch would
-      # be refused the same way: spend the rest of the turn on the scripted
-      # layer instead of on a call that cannot land.
-      echo "pistonball llm: provider throttled with no other candidate; ",
-        open.len, " seat(s) fall back for turn ", turnIndex
-      break
+    var retryable: seq[int]
+    for seat in open:
+      if lastCause[seat] in ["throttled", "no_credentials"]:
+        failFast.add(seat)
+      else:
+        retryable.add(seat)
+    open = retryable
 
   # --- anything still open plays wavebot for this turn ---------------------
+  open.add(failFast)
   for seat in open:
     engine.installScripted(sim, seat, blWavebot, srcFallback)
     let cause =
-      if engine.client.disabled or engine.client.transport == ltNone:
-        "no_credentials"
+      if lastCause[seat].len > 0: lastCause[seat]
       elif engine.llmOff: "budget_guard"
-      elif engine.client.throttled: "throttled"
-      else: "parse_error"
-    result.add(fallbackRecord(turnIndex, seat, 2, cause,
-      "seat fell back to the wavebot script"))
+      else: "timeout"
+    if cause != "no_credentials":
+      result.add(fallbackRecord(turnIndex, seat, 2, cause,
+        "seat fell back to the wavebot script"))
     ## "falling back" is the phrase phase 60 greps the GAME log for.
     echo "pistonball llm: seat ", seat, " falling back to wavebot (", cause,
       ") on turn ", turnIndex

@@ -6,26 +6,22 @@
 
 A bad slot or token is refused with 403 BEFORE the websocket upgrade.
 
-A seat sends exactly ONE kind of message, a Sprite v1 chat frame carrying its
-registration:
+A seat registers with a Sprite v1 chat frame:
 
-    {"type":"register",
-     "prompt":"<strategy text or empty>",
-     "scripted":"wavebot"|"metronome"|null,
-     "policy":"<free label>"}
+    {"type":"register", "kind":"prompt"|"jev"|"scripted",
+     "scripted":"wavebot"|"metronome"|null, "policy":"<free label>"}
 
 It is re-sent for the first ~10 s of frames. Joins are strictly
-slot-sequential, so a seat's first registration routinely arrives before its
-player index exists; the server HOLDS an unappliable registration rather than
-dropping it. A seat that never registers, or registers with neither field, is
-scripted: "wavebot". The prompt is capped at 4000 runes at the transport
-(over-long is truncated, never rejected) and is NEVER written to the replay or
-the results.
+slot-sequential, so the server holds an unappliable registration until the
+seat is admitted. Prompt text stays in the player container and is never
+written to the game, replay, or results. An unregistered seat plays wavebot.
 
-SEATS SEND NO INPUTS. Every command byte is computed server-side by the
-deterministic controller; an input mask arriving on a player socket is
-discarded. The seat sends the Sprite v1 Ready packet (0x85) after each received
-frame and otherwise only receives.
+The game sends a text decision message with one seat's private `view`, the
+system rules, a request `id`, retry flag, and timeout. The player responds
+with a text action message carrying the same `id` and the complete script in
+`action`, or a `cause` and `error` when inference fails. The game parses and
+repairs the script, records fallbacks, and compiles deterministic command bytes.
+The player also sends Sprite v1 Ready (0x85) after each binary frame.
 
 Each seat's socket receives one binary Sprite v1 frame per tick, filtered by
 the SAME window predicate the LLM view uses: the housing and floor, the five
