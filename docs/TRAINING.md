@@ -57,10 +57,8 @@ Set a finite timestep limit for either trainer.
 
 ## Hosted player policies
 
-The numeric bridge is for training; deployed prompt and Jev policies use the
-normal player socket. The game sends the same private `windowView` to each
-seat. Prompt policies request `/v1/messages`; Jev chooses a mode through
-`/v1/systemone` and returns the same full PistonScript. The game owns parsing,
-fallback, control, scoring, and replay. Upload either policy with
-`--use-bedrock --bedrock-model anthropic/claude-haiku-4.5` or
-`--use-bedrock --bedrock-model typesafe/jev-1.13`, respectively.
+The numeric bridge is for training. Ordinary players receive the private
+`windowView` and return a complete PistonScript through the player socket.
+Prompt policies request `/v1/messages`. The game owns parsing, fallback,
+control, scoring, and replay. Upload a prompt policy with
+`--use-bedrock --bedrock-model anthropic/claude-haiku-4.5`.

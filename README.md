@@ -17,7 +17,7 @@ records, and it is what the static wasm viewer re-simulates.
   second. Doing nothing scores -18.
 * One image, two entrypoints: /bin/pistonball and /bin/pistonball-player.
 * Policies are env-switched: PLAYER_PROMPT uses the prompt model,
-  PLAYER_JEV=true uses Jev, and PLAYER_SCRIPTED=wavebot|metronome uses a baseline.
+  PLAYER_SCRIPTED=wavebot|metronome uses a baseline.
   Model calls run in the player container through its sidecar.
 
 Rules: docs/RULES.md. Wire protocol: docs/PROTOCOL.md. Writing a program:

@@ -8,7 +8,7 @@ A bad slot or token is refused with 403 BEFORE the websocket upgrade.
 
 A seat registers with a Sprite v1 chat frame:
 
-    {"type":"register", "kind":"prompt"|"jev"|"scripted",
+    {"type":"register", "kind":"prompt"|"external"|"scripted",
      "scripted":"wavebot"|"metronome"|null, "policy":"<free label>"}
 
 It is re-sent for the first ~10 s of frames. Joins are strictly

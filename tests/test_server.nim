@@ -29,11 +29,11 @@ suite "the server contract":
     check not parseRegistration("{\"type\":\"shout\",\"text\":\"hi\"}").ok
     check not parseRegistration("").ok
 
-  test "Jev registers as an ordinary model policy":
+  test "External players register through the general interface":
     let registration = parseRegistration(
-      "{\"type\":\"register\",\"kind\":\"jev\",\"policy\":\"jev\"}")
+      "{\"type\":\"register\",\"kind\":\"external\",\"policy\":\"external\"}")
     check registration.ok
-    check registration.kind == "jev"
+    check registration.kind == "external"
     check not parseRegistration(
       "{\"type\":\"register\",\"kind\":\"unknown\"}").ok
 
