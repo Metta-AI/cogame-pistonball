@@ -298,7 +298,7 @@ proc parseRegistration*(
     return
   result.ok = true
   result.kind = node{"kind"}.getStr()
-  if result.kind notin ["prompt", "jev", "scripted"]:
+  if result.kind notin ["prompt", "external", "scripted"]:
     result.ok = false
     return
   if not node{"scripted"}.isNil and node{"scripted"}.kind == JString:
@@ -600,7 +600,7 @@ proc runServerLoop*(
             var policy = engine.seats[index]
             let firstRegistration = not policy.registered
             policy.registered = true
-            policy.isLlm = registration.kind in ["prompt", "jev"]
+            policy.isLlm = registration.kind in ["prompt", "external"]
             policy.baseline = parseBaseline(registration.scripted)
             policy.label =
               if registration.policy.len > 0: registration.policy

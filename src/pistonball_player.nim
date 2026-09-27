@@ -1,7 +1,6 @@
 ## The pistonball player container registers and answers private decision views.
 ##
 ##   PLAYER_PROMPT        a strategy in plain English -> this seat is an LLM seat
-##   PLAYER_JEV=true      Jev mode choice             -> this seat is a Jev seat
 ##   PLAYER_SCRIPTED      wavebot | metronome         -> this seat is scripted
 ##   PLAYER_POLICY_LABEL  a free label for the replay's `register` record
 ##
@@ -16,7 +15,7 @@ import
   bitworld/spriteprotocol,
   curly,
   whisky,
-  pistonball/[llm, scripts, sim_config, jev_policy]
+  pistonball/[llm, scripts, sim_config]
 
 const
   ConnectAttempts = 240      ## 240 x 500 ms = 2 minutes of dialling.
@@ -57,13 +56,11 @@ when isMainModule:
   let
     prompt = getEnv("PLAYER_PROMPT").strip()
     scripted = getEnv("PLAYER_SCRIPTED").strip()
-    kind = if getEnv("PLAYER_JEV").strip() == "true": "jev"
-      elif prompt.len > 0: "prompt"
+    kind = if prompt.len > 0: "prompt"
       else: "scripted"
     label = block:
       let explicit = getEnv("PLAYER_POLICY_LABEL").strip()
       if explicit.len > 0: explicit
-      elif kind == "jev": "jev"
       elif kind == "prompt": "prompt"
       elif scripted.len > 0: scripted
       else: "wavebot"
@@ -123,26 +120,21 @@ when isMainModule:
           if decision{"type"}.getStr() == "decision":
             var reply = %*{"type": "action", "id": decision["id"]}
             let timeoutSeconds = decision["timeout_seconds"].getInt()
-            if kind == "prompt" and client.disabled or
-                kind == "jev" and not jevConfigured():
+            if kind == "prompt" and client.disabled:
               reply["cause"] = %"no_credentials"
               reply["error"] = %"no_credentials"
             else:
               try:
-                if kind == "jev":
-                  reply["action"] = chooseJevAction(decision["view"],
-                    decision["seat"].getInt(), timeoutSeconds)
-                else:
-                  client.throttled = false
-                  var user = userMessage(prompt, $decision["view"])
-                  if decision["retry"].getBool():
-                    user.add("\n\nYour previous reply was unusable. Return only JSON.")
-                  let request = client.requestFor(
-                    decision["system"].getStr(), user)
-                  let response = client.curl.post(request.url,
-                    request.headers, request.body, timeoutSeconds)
-                  reply["action"] = extractJsonObject(
-                    client.textOf(response, "", request.url))
+                client.throttled = false
+                var user = userMessage(prompt, $decision["view"])
+                if decision["retry"].getBool():
+                  user.add("\n\nYour previous reply was unusable. Return only JSON.")
+                let request = client.requestFor(
+                  decision["system"].getStr(), user)
+                let response = client.curl.post(request.url,
+                  request.headers, request.body, timeoutSeconds)
+                reply["action"] = extractJsonObject(
+                  client.textOf(response, "", request.url))
               except ScriptError as error:
                 reply["cause"] = %"parse_error"
                 reply["error"] = %error.msg

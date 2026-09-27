@@ -235,10 +235,9 @@ suite "the manifest":
 
   test "tools/ci/policies.json is pistonball's own set, correctly shaped":
     let policies = parseJson(readFile(root / "tools" / "ci" / "policies.json"))
-    check policies.len == 5
+    check policies.len == 4
     var prompts = 0
     var scripted = 0
-    var jev = 0
     var owned = 0
     for policy in policies:
       check policy["name"].getStr().startsWith("pistonball-")
@@ -251,13 +250,10 @@ suite "the manifest":
         inc scripted
         check parseBaseline(policy["env"]["PLAYER_SCRIPTED"].getStr()) in
           {blWavebot, blMetronome}
-      if policy["env"].hasKey("PLAYER_JEV"):
-        inc jev
       if policy.hasKey("player"):
         inc owned
         check policy["player"].getStr() ==
           "ply_bac48eb1-662e-44f8-973d-f3e016dccf5d"
     check prompts == 2
     check scripted == 2
-    check jev == 1
     check owned == 1
