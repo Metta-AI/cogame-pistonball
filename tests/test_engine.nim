@@ -76,7 +76,7 @@ proc fakeBatch(provider: FakeProvider): BatchFn =
 suite "the decision turn":
   setup:
     delEnv("ANTHROPIC_API_KEY")
-    delEnv("AWS_ENDPOINT_URL_BEDROCK_RUNTIME")
+    delEnv("COWORLD_LLM_ENDPOINT")
 
   test "with no credentials every one of the twenty seats falls back in ONE turn":
     var game = seatedSim(testConfig())

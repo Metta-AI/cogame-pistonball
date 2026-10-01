@@ -130,7 +130,7 @@ when isMainModule:
                 if decision["retry"].getBool():
                   user.add("\n\nYour previous reply was unusable. Return only JSON.")
                 let request = client.requestFor(
-                  decision["system"].getStr(), user)
+                  decision["system"].getStr(), user, -1)
                 let response = client.curl.post(request.url,
                   request.headers, request.body, timeoutSeconds)
                 reply["action"] = extractJsonObject(
