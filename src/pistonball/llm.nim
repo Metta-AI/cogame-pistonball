@@ -11,13 +11,13 @@ const
 
 type
   LlmTransport* = enum
-    ltNone, ltBedrock, ltAnthropic
+    ltNone, ltSidecar, ltAnthropic
 
   LlmClient* = ref object
     curl*: Curly
     transport*: LlmTransport
     apiKey: string
-    bedrockEndpoint: string
+    sidecarEndpoint: string
     model*: string
     maxOutputTokens*: int
     disabled*: bool
@@ -35,11 +35,11 @@ proc newLlmClient*(config: GameConfig): LlmClient =
             else: "claude-haiku-4-5-20251001"),
     maxOutputTokens: max(1, config.maxOutputTokens)
   )
-  let bedrockEndpoint = getEnv("AWS_ENDPOINT_URL_BEDROCK_RUNTIME").strip()
-  if bedrockEndpoint.len > 0:
-    result.transport = ltBedrock
-    result.bedrockEndpoint = bedrockEndpoint.strip(chars = {'/'}, leading = false)
-    result.model = getEnv("BEDROCK_MODEL")
+  let sidecarEndpoint = getEnv("COWORLD_LLM_ENDPOINT").strip()
+  if sidecarEndpoint.len > 0:
+    result.transport = ltSidecar
+    result.sidecarEndpoint = sidecarEndpoint.strip(chars = {'/'}, leading = false)
+    result.model = getEnv("COWORLD_LLM_MODEL", "anthropic/claude-haiku-4.5")
     result.curl = newCurly()
     echo "pistonball llm: sidecar transport, model ", result.model
     return
@@ -57,7 +57,7 @@ proc newLlmClient*(config: GameConfig): LlmClient =
       "every turn is falling back to the scripted layer"
 
 proc requestFor*(
-  client: LlmClient, system, user: string
+  client: LlmClient, system, user: string, slot: int
 ): tuple[url: string, headers: HttpHeaders, body: string] =
   ## One Messages-API request, shaped for whichever transport is live.
   var body = %*{
@@ -66,10 +66,12 @@ proc requestFor*(
     "messages": [{"role": "user", "content": user}]
   }
   var headers: HttpHeaders
+  if client.transport == ltSidecar and slot >= 0:
+    headers["X-Coworld-Player-Slot"] = $slot
   headers["content-type"] = "application/json"
   body["model"] = %client.model
-  if client.transport == ltBedrock:
-    result.url = client.bedrockEndpoint & "/v1/messages"
+  if client.transport == ltSidecar:
+    result.url = client.sidecarEndpoint & "/v1/messages"
   else:
     if "haiku" notin client.model and "4-5" notin client.model:
       body["output_config"] = %*{"effort": "low"}
