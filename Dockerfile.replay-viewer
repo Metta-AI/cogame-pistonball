@@ -56,3 +56,7 @@ RUN nim c --parallelBuild:1 -d:emscripten replay-viewer/pistonball_replay.nim &&
 
 RUN find replay-viewer/dist -type d -exec chmod 755 {} + && \
   find replay-viewer/dist -type f -exec chmod 644 {} +
+
+# Extract only public viewer assets; importing the compiler closure duplicates gigabytes.
+FROM scratch AS replay-viewer-bundle
+COPY --from=replay-viewer-builder /workspace/pistonball/replay-viewer/dist /workspace/pistonball/replay-viewer/dist
