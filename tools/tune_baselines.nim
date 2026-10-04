@@ -10,7 +10,7 @@
 
 import
   std/[strformat, strutils],
-  ../src/pistonball/[sim, scripts, control, baselines]
+  ../src/pistonball/[sim, baselines, decide]
 
 proc playEpisode(seed: int, params: BaselineParams): tuple[
     delivered: bool, scoreMilli: int64, ticks: int] =
@@ -22,16 +22,25 @@ proc playEpisode(seed: int, params: BaselineParams): tuple[
   config.update("")
   var game = initSimServer(config)
   discard game.addPlayer("sweep", 0, "", trusted = true)
+  var engine = initDecisionEngine(game)
+  engine.params = params
+  var lastTurn = -1
   var commands = newSeq[uint8](game.seatCount())
   while game.phase != GameOver and game.tickCount < config.maxTicks + 8:
+    if game.phase == Playing:
+      engine.observe(game)
+      let turn = game.gameTicksElapsed() div config.turnTicks
+      if turn != lastTurn:
+        discard engine.turn(game, turn, 0)
+        engine.closeTurn()
+        lastTurn = turn
     for i in 0 ..< commands.len:
       commands[i] = 127'u8
     for piston in 0 ..< PistonCount:
       let seat = game.seatOfPiston(piston)
       if seat < 0 or seat >= commands.len:
         continue
-      commands[seat] = pistonCommand(
-        game, wavebotScript(game, piston, params), piston)
+      commands[seat] = engine.commandFor(game, piston)
     game.step(commands)
   (game.delivered(), game.scoreMilli(), game.tickCount)
 

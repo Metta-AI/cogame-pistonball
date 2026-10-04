@@ -1,37 +1,56 @@
-# Metta post-training data
+# Pistonball training
 
-The native simulator and published `wavebot` policy can export supervised
-examples for both certified variants:
-
-```sh
-nimby sync nimby.lock
-nim r -d:release --path:src tools/export_posttrain.nim \
-  /tmp/pistonball-default 10 1 default
-nim r -d:release --path:src tools/export_posttrain.nim \
-  /tmp/pistonball-sprint 10 1 sprint
-```
-
-Each run reads its exact manifest variant config and plays complete seeded,
-twenty-seat games. The exporter records the hosted system prompt, each seat's
-one-metre window, and a `wavebot` script that round-trips through the game's
-reply parser. Splits are by game seed. The manifest records source revision,
-variant, scores, wins, and row counts. Existing output directories are never
-overwritten.
-
-Train either output with Metta post-training:
+The canonical exporter produces complete private trajectory events. It does
+not create train/validation datasets or authorize source content.
 
 ```sh
-nix develop -c uv run --package metta-posttrain --extra train \
-  python -m metta_posttrain.train --dataset /tmp/pistonball-default \
-  --output /tmp/pistonball-adapter --model Qwen/Qwen3-0.6B \
-  --max-steps 100 --max-length 4096
+nim c -d:release --path:src -o:/tmp/pistonball-export tools/export_posttrain.nim
+/tmp/pistonball-export /tmp/pistonball-default 20 1 default source-<commit>
+/tmp/pistonball-export /tmp/pistonball-sprint 20 1 sprint source-<commit>
 ```
 
-The local 10-game default and sprint exports each contained 160 training and
-40 validation examples, with 10/10 deliveries. All 400 examples fit a
-4096-token model context. A one-step CPU optimizer smoke reduced held-out loss
-from 5.5833 to 5.5089 (default) and 5.5254 to 5.4587 (sprint). This distills
-the scripted teacher; it does not establish stronger league play.
+All five exporter arguments are required. Each episode uses the declared
+variant configuration and the new `wavebot-private-view-v1` teacher. The
+teacher consumes the same rounded private `windowView` as the live scripted
+baseline. Exact subpixel simulator state is not a teacher input. The ordinary
+parser installs each response; trajectories retain every actual one-byte
+control per tick and the resulting state hashes and terminal outcomes.
+
+Convert raw events with the current Metta SDK:
+
+```python
+from pathlib import Path
+from coworld.decision_trajectory import read_trajectory_jsonl, export_complete_episodes
+
+raw = Path("/tmp/pistonball-default/trajectories.jsonl")
+complete = Path("/tmp/pistonball-complete.jsonl")
+export_complete_episodes(read_trajectory_jsonl(raw), complete)
+```
+
+An independent reviewer must bind source and teacher review to the exact
+complete-episode file. Import only with that reviewer-provided authority:
+
+```python
+from metta_posttrain.hosted import HostedImportAuthority, export_hosted
+
+authority = HostedImportAuthority.model_validate_json(
+    Path("/tmp/reviewer-provided-authority.json").read_bytes()
+)
+export_hosted(
+    complete, Path("/tmp/pistonball-reviewed-dataset"),
+    target_policy="wavebot-private-view-v1", authority=authority,
+)
+```
+
+The shared importer assigns whole seed families to training or validation.
+Default and Sprint with the same seed use one `pistonball-<seed>` family.
+Existing output paths are never overwritten. Private corpora are not public
+replays, Docker assets, or automatically authorized model training data.
+
+Historical exports used the raw simulator teacher and local modulo splits.
+Their reported losses and deliveries belong to that earlier, unspecified
+source and profile. They do not qualify this private-view profile or establish
+model strength. Keep archived corpus bytes unchanged.
 
 ## Numeric training
 
@@ -60,5 +79,5 @@ Set a finite timestep limit for either trainer.
 The numeric bridge is for training. Ordinary players receive the private
 `windowView` and return a complete PistonScript through the player socket.
 Prompt policies request `/v1/messages`. The game owns parsing, fallback,
-control, scoring, and replay. Upload a prompt policy with
-`--use-bedrock --bedrock-model anthropic/claude-haiku-4.5`.
+control, scoring, and replay. The platform supplies `COWORLD_LLM_ENDPOINT` and the native model identity.
+Provider credentials are not a player configuration contract.

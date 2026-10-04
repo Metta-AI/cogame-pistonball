@@ -6,22 +6,47 @@
 
 A bad slot or token is refused with 403 BEFORE the websocket upgrade.
 
-A seat registers with a Sprite v1 chat frame:
+The server sends a text `welcome` with the authenticated native player slot.
+The container registers once through Sprite v1 chat:
 
-    {"type":"register", "kind":"prompt"|"external"|"scripted",
+    {"type":"register", "kind":"prompt"|"scripted", "prompt":"<private guidance>",
      "scripted":"wavebot"|"metronome"|null, "policy":"<free label>"}
 
-It is re-sent for the first ~10 s of frames. Joins are strictly
-slot-sequential, so the server holds an unappliable registration until the
-seat is admitted. Prompt text stays in the player container and is never
-written to the game, replay, or results. An unregistered seat plays wavebot.
+Admission closes when play starts. The server freezes the registration before
+seating the player. Operator guidance and full model evidence stay in private
+trajectories; public replay registrations contain neither.
 
-The game sends a text decision message with one seat's private `view`, the
-system rules, a request `id`, retry flag, and timeout. The player responds
-with a text action message carrying the same `id` and the complete script in
-`action`, or a `cause` and `error` when inference fails. The game parses and
-repairs the script, records fallbacks, and compiles deterministic command bytes.
-The player also sends Sprite v1 Ready (0x85) after each binary frame.
+A text `decision` carries string `decision_id` and `attempt_id`, `seat`, the
+private `view`, system rules, `retry`, and
+`transport={budget_ms,cleanup_budget_ms}`. Transport budgets are separate from
+the model observation. The ordinary turn budget is 20,000 ms: the first call
+uses at most 12,000 ms and one retry at most 6,000 ms, both clipped to that
+same turn deadline. Ordinary temperature remains omitted; an explicit
+`COWORLD_LLM_TEMPERATURE` must be finite and between zero and two.
+
+The native container emits `attempt_started` before opening its owned HTTP
+request. Its `training_attempt` has exact prompt/request/decoder fields and
+null response facts. An `action` echoes the issued identifiers, proposed JSON,
+and the same attempt's actual response bytes, headers, model, call identifier,
+and joined-reader evidence. The engine checks response-to-action equality.
+Ordinary parser repairs still execute, but repaired proposals have fallback
+status and cannot supply accepted model targets. Player assertions never
+establish teacher or platform receipt authority.
+
+At completion or interruption, the engine sends `stop` with the latest
+`decision_id`, an unpredictable `stop_id`, and remaining `cleanup_budget_ms`.
+Every admitted owner must cancel and join its HTTP worker, including owners
+whose sockets disconnected. `stopped` echoes the nonce and identifier,
+`worker_status="joined"`, and all retained `{decision_id,training_attempt}`
+records. Older-operation bytes are retained against their original issued
+identity. The game sends `evidence_received` after validating those facts;
+the container requires that receipt before closing. A self-initiated stop
+uses a null nonce and earns no engine stop-acknowledgement credit.
+
+The game freezes private evidence admission before sealing its trajectory.
+Unresolved ownership produces private truncation and withholds public results.
+One absolute cleanup deadline covers private sealing and subsequent public
+artifact writes. The player sends Sprite v1 Ready (0x85) after binary frames.
 
 Each seat's socket receives one binary Sprite v1 frame per tick, filtered by
 the SAME window predicate the LLM view uses: the housing and floor, the five
