@@ -34,7 +34,7 @@ proc recordEpisode(path: string, seed = 4417231, maxTicks = 900): SimServer =
         game.gameTicksElapsed() div config.turnTicks != turn - 1:
       for seat in 0 ..< PistonCount:
         let piston = max(0, game.pistonOfSeat(seat))
-        var script = wavebotScript(game, piston)
+        var script = fixtureWavebotScript(game, piston)
         script.say = "up behind it \u2014 \u00fcber"
         # Seat 0 plays the LLM and seat 1 falls back, so the recorded stream
         # carries all three `source` values a real episode can produce.

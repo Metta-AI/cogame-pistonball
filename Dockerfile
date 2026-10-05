@@ -4,6 +4,7 @@
 # which is what keeps a champion and a scripted filler byte-identical apart
 # from their environment.
 FROM debian:bookworm-slim AS build
+SHELL ["/usr/bin/nice", "-n", "19", "/bin/sh", "-c"]
 
 RUN apt-get update && \
   apt-get install -y --no-install-recommends \
@@ -35,12 +36,12 @@ RUN nimby --global sync nimby.lock
 
 COPY . .
 ARG NimFlags="-d:release -d:useMalloc --opt:speed --stackTrace:on"
-RUN nim c \
+RUN nim c --parallelBuild:1 \
   $NimFlags \
   --nimcache:/tmp/pistonball-nimcache \
   --out:pistonball \
   src/pistonball.nim && \
-  nim c \
+  nim c --parallelBuild:1 \
   $NimFlags \
   --nimcache:/tmp/pistonball-player-nimcache \
   --out:pistonball-player \
@@ -48,6 +49,7 @@ RUN nim c \
 
 # Run Docker.
 FROM debian:bookworm-slim
+SHELL ["/usr/bin/nice", "-n", "19", "/bin/sh", "-c"]
 
 RUN apt-get update && \
   apt-get install -y --no-install-recommends ca-certificates libcurl4 && \
@@ -59,5 +61,9 @@ COPY --from=build /workspace/pistonball/pistonball-player /bin/pistonball-player
 COPY --from=build /workspace/pistonball/*.json ./
 COPY --from=build /workspace/pistonball/data ./data
 COPY --from=build /workspace/pistonball/client ./client
+RUN find data client -type d -exec chmod 755 {} + && \
+  find data client -type f -exec chmod 644 {} + && \
+  chmod 755 /bin/pistonball /bin/pistonball-player && \
+  chmod 644 ./*.json
 
 CMD ["/bin/pistonball"]

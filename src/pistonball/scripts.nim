@@ -319,6 +319,12 @@ proc scriptJson*(script: PistonScript): JsonNode =
     "blind": $script.blind
   }
 
+proc appliedScriptAction*(script: PistonScript): JsonNode =
+  ## Canonical installed controls and the actual bounded lines emitted by the engine.
+  result = scriptJson(script)
+  result["note"] = %script.note
+  result["say"] = %script.say
+
 proc scriptRecord*(
   script: PistonScript, turn, seat, piston: int, alias: string
 ): JsonNode =

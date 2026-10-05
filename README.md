@@ -22,3 +22,9 @@ records, and it is what the static wasm viewer re-simulates.
 
 Rules: docs/RULES.md. Wire protocol: docs/PROTOCOL.md. Writing a program:
 docs/SCRIPTS.md.
+
+Hosted prompt players require the injected `COWORLD_LLM_ENDPOINT` and use
+`COWORLD_LLM_MODEL` when configured. They send the authenticated welcome slot
+to the native sidecar. Provider credentials and external endpoint fallbacks
+are unnecessary. Complete private training exports use the reviewed workflow
+in [docs/TRAINING.md](docs/TRAINING.md).

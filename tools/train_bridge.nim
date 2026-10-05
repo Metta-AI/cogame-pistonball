@@ -172,8 +172,7 @@ when isMainModule:
         "values": views[seat].values(variant), "action_heads": heads()}
     of "teacher":
       doAssert game.phase != GameOver
-      response = %*{"response": $action(wavebotScript(game,
-        game.pistonOfSeat(seat)))}
+      response = %*{"response": $action(wavebotScript(views[seat]))}
     of "step":
       doAssert game.phase != GameOver and request["decision_id"].getInt() == id
       let candidate = parseJson(request["response"].getStr())

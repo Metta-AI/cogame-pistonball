@@ -4,9 +4,10 @@
 ## matching the state certification runs in.
 
 import
-  std/[json, monotimes, os, strutils, times, unittest],
+  std/[json, monotimes, options, os, strutils, times, unittest],
   ../src/pistonball/[sim, roster, scripts, control, baselines, decide],
   ./helpers
+import bitworld/decision_trajectory
 
 proc llmEngine(game: SimServer): DecisionEngine =
   result = initDecisionEngine(game)
@@ -14,7 +15,7 @@ proc llmEngine(game: SimServer): DecisionEngine =
     result.seats[seat].isLlm = true
     result.seats[seat].registered = true
     result.seats[seat].label = "prompt"
-  result.batch = proc(calls: seq[BatchCall], timeoutSeconds: int): seq[BatchReply] =
+  result.batch = proc(calls: seq[BatchCall], deadline: MonoTime): seq[BatchReply] =
     for call in calls:
       result.add(BatchReply(seat: call.seat, cause: "no_credentials",
         error: "no_credentials"))
@@ -54,7 +55,7 @@ proc newFakeProvider(
 
 proc fakeBatch(provider: FakeProvider): BatchFn =
   let fake = provider
-  result = proc(calls: seq[BatchCall], timeoutSeconds: int): seq[BatchReply]
+  result = proc(calls: seq[BatchCall], deadline: MonoTime): seq[BatchReply]
       {.closure, gcsafe.} =
     let startMs = (getMonoTime() - fake.origin).inMilliseconds.int
     if fake.delayMs > 0:
@@ -68,7 +69,7 @@ proc fakeBatch(provider: FakeProvider): BatchFn =
         result.add(BatchReply(seat: call.seat, cause: "throttled",
           error: "provider throttled"))
       else:
-        result.add(BatchReply(seat: call.seat, ok: true, action: body))
+        result.add(BatchReply(seat: call.seat, ok: true, action: body, origin: aoModel))
     fake.batches.add(FakeBatch(size: calls.len, tags: tags,
       startMs: startMs,
       endMs: (getMonoTime() - fake.origin).inMilliseconds.int))
@@ -219,30 +220,31 @@ suite "the decision turn":
       check engine.scripts[seat].source == srcLlm
       check validScript(engine.scripts[seat])
 
-  test "a HUNG provider still hands the turn back inside turnBudgetMs":
+  test "a batch owner returning after its deadline cannot install a model action":
     var game = seatedSim(testConfig())
     game.phase = Playing
     game.config.turnBudgetMs = 300
     var engine = llmEngine(game)
     # Answers, but far too late to be worth a retry.
     let provider = newFakeProvider(
-      @["I am thinking about it"], delayMs = 500)
+      @[GoodScript], delayMs = 500)
     engine.batch = fakeBatch(provider)
     let started = epochTime()
     let records = engine.turn(game, 0, 0)
     let elapsed = epochTime() - started
     check provider.batches.len == 1          # the budget cancelled the retry
     check elapsed < 2.0
-    var budgetTimeouts = 0
+    var timedOutSeats: seq[int]
     for record in records:
       let node = parseJson(record)
       if node["k"].getStr() == "fallback" and
           node["cause"].getStr() == "timeout":
-        check "budget" in node["detail"].getStr()
-        inc budgetTimeouts
-    check budgetTimeouts == 20
+        let seat = node["seat"].getInt()
+        if seat notin timedOutSeats: timedOutSeats.add(seat)
+    check timedOutSeats.len == 20
     for seat in 0 ..< 20:
       check engine.haveScript[seat]
+      check engine.scripts[seat].source == srcFallback
       check validScript(engine.scripts[seat])
 
   test "a parse failure retries EXACTLY once, and the retry is one batch too":
@@ -285,6 +287,20 @@ suite "the decision turn":
     for seat in 0 ..< 20:
       check engine.scripts[seat].source == srcFallback
       check validScript(engine.scripts[seat])
+
+  test "a repaired model proposal keeps ordinary controls but cannot become a model label":
+    var game = seatedSim(testConfig())
+    game.phase = Playing
+    var engine = llmEngine(game)
+    let proposal = parseJson(GoodScript)
+    proposal["up_m"] = %1.7
+    let provider = newFakeProvider(@[$proposal])
+    engine.batch = fakeBatch(provider)
+    discard engine.turn(game, 0, 0)
+    for seat in 0 ..< 20:
+      check engine.scripts[seat].upUm == Stroke
+      check engine.scripts[seat].source == srcFallback
+      check engine.phaseSelected[seat].isNone
 
   test "a THROTTLED provider skips the retry entirely":
     var game = seatedSim(testConfig())

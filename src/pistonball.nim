@@ -1,8 +1,9 @@
 import
-  std/[json, os, sysrand],
-  bitworld/runtime,
+  std/[json, math, monotimes, os, strutils, sysrand, times],
+  bitworld/[runtime, runtime_input, native_http, native_stop, decision_trajectory],
   pistonball/sim,
-  pistonball/server
+  pistonball/server,
+  pistonball/training_capture
 
 const LegacyFixedSeed* = 4417231
   ## The compiled-in default seed. A config carrying it (or no seed at all)
@@ -53,13 +54,33 @@ proc stripUnpinnedSeed*(configJson: string): string =
     configJson
 
 when isMainModule:
-  let runtimeConfig =
-    try:
-      readRuntimeConfig()
-    except CatchableError as error:
-      # A clean message and a non-zero exit, never a traceback: the runner
-      # reports this verbatim.
-      quit("pistonball: bad runtime configuration: " & error.msg, 1)
+  installNativeStopHandlers()
+  let processStarted = getMonoTime()
+  var episodeDeadline = processStarted + initDuration(seconds = 1200)
+  var inputControl: NativeRequestControl
+  var inputCaptures: seq[RuntimeInputCapture]
+  var runtimeConfig: RuntimeConfig
+  try:
+    let timeout = parseFloat(getEnv("COWORLD_TIMEOUT_SECONDS", "1200"))
+    if classify(timeout) in {fcNan, fcInf, fcNegInf} or timeout <= 0:
+      raise newException(PistonballError, "episode timeout must be finite and positive")
+    episodeDeadline = processStarted + initDuration(nanoseconds = int64(timeout * 1_000_000_000))
+    let inputDeadline = min(episodeDeadline - initDuration(seconds = 5),
+      processStarted + initDuration(seconds = 60))
+    proc input(value, source: string): string =
+      readRuntimeInput(value, source, inputDeadline, inputControl,
+        16 * 1024 * 1024, 64 * 1024, inputCaptures)
+    runtimeConfig = readRuntimeConfig(input)
+  except CatchableError as error:
+    let status = if interruptionRequested(): esTruncated else: esFailed
+    writeInitializationCheckpoint(status, "runtime_config", $error.name, error.msg,
+      episodeDeadline, runtimeInputCapturesJson(inputCaptures))
+    if status == esTruncated: quit(0)
+    quit("pistonball: runtime configuration rejected (" & $error.name & ")", 1)
+  if interruptionRequested():
+    writeInitializationCheckpoint(esTruncated, "runtime_config", "stop_requested",
+      "process stop requested", episodeDeadline, runtimeInputCapturesJson(inputCaptures))
+    quit(0)
   let localReplayPath =
     if runtimeConfig.replayUri.len > 0:
       getTempDir() / ("pistonball-replay-" & $getCurrentProcessId() & ".replay")
@@ -77,7 +98,9 @@ when isMainModule:
       config.update(stripUnpinnedSeed(runtimeConfig.config))
       echo "seed not pinned; randomized"
   except CatchableError as error:
-    quit("pistonball: " & error.msg, 1)
+    writeInitializationCheckpoint(esFailed, "game_config", $error.name, error.msg,
+      episodeDeadline, runtimeInputCapturesJson(inputCaptures))
+    quit("pistonball: game configuration rejected (" & $error.name & ")", 1)
 
   echo "pistonball config: host=", runtimeConfig.host,
     " port=", runtimeConfig.port,
@@ -104,5 +127,7 @@ when isMainModule:
     config,
     localReplayPath,
     loadReplayPath,
-    runtimeConfig
+    runtimeConfig,
+    episodeDeadline,
+    runtimeInputCapturesJson(inputCaptures)
   )

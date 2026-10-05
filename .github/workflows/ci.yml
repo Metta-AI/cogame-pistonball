@@ -154,6 +154,28 @@ jobs:
           nim c -d:release --hints:off --path:src -o:/tmp/pistonball-train-bridge tools/train_bridge.nim
           python3 tools/test_train_bridge.py /tmp/pistonball-train-bridge
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Native owner and private capture controls
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          python -m pip install aiohttp==3.13.5
+          nim c --parallelBuild:1 -d:release -d:useMalloc --opt:speed --stackTrace:on --out:/tmp/pistonball src/pistonball.nim
+          nim c --parallelBuild:1 -d:release -d:useMalloc --opt:speed --stackTrace:on --out:/tmp/pistonball-player src/pistonball_player.nim
+          nim c --parallelBuild:1 -d:release --path:src --out:/tmp/pistonball-owner-failure tools/owner_failure_fixture.nim
+          proof="$(mktemp -d)"
+          python tools/test_player_transport.py /tmp/pistonball-player "$proof/player"
+          python tools/test_runtime_input_lifecycle.py /tmp/pistonball "$proof/runtime-http"
+          python tools/test_runtime_input_lifecycle.py /tmp/pistonball "$proof/runtime-https" https
+          python tools/test_game_owner_failure.py /tmp/pistonball-owner-failure "$proof/owner-failure"
+          python tools/test_game_start_chronology.py /tmp/pistonball /tmp/pistonball-player "$proof/chronology"
+          for scenario in complete large TERM INT; do
+            python tools/test_game_native_lifecycle.py /tmp/pistonball /tmp/pistonball-player "$proof/$scenario" "$scenario"
+          done
+
   # ---------------------------------------------------------------------
   # Packaging smoke: the production image builds, and one real episode runs
   # end to end in raw docker with the certification fixture's seat mix.

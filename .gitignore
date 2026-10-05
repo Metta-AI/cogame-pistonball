@@ -20,3 +20,7 @@ result-*
 .env
 *.pem
 *.key
+
+# Python verification outputs.
+__pycache__/
+*.pyc
