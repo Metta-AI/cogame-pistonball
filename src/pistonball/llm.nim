@@ -13,7 +13,7 @@
 ## budget with twenty seats.
 ##
 ## Credentials, in order of preference:
-##   Bedrock sidecar (AWS_ENDPOINT_URL_BEDROCK_RUNTIME + AWS_BEARER_TOKEN_BEDROCK)
+##   COWORLD_LLM_ENDPOINT (hosted), then local Bedrock (AWS_ENDPOINT_URL_BEDROCK_RUNTIME + AWS_BEARER_TOKEN_BEDROCK)
 ##   ANTHROPIC_API_KEY
 ##   ANTHROPIC_API_KEY_URI
 ## With none of them the client disables itself and every turn falls back to
@@ -33,11 +33,12 @@ const
 
 type
   LlmTransport* = enum
-    ltNone, ltBedrock, ltAnthropic
+    ltNone, ltSidecar, ltBedrock, ltAnthropic
 
   LlmClient* = ref object
     curl*: Curly
     transport*: LlmTransport
+    sidecarEndpoint: string
     apiKey: string
     bedrockEndpoint: string
     bedrockModels: seq[string]
@@ -111,6 +112,13 @@ proc newLlmClient*(config: GameConfig): LlmClient =
             else: "claude-haiku-4-5-20251001"),
     maxOutputTokens: max(1, config.maxOutputTokens)
   )
+  let sidecarEndpoint = getEnv("COWORLD_LLM_ENDPOINT").strip()
+  if sidecarEndpoint.len > 0:
+    result.transport = ltSidecar
+    result.sidecarEndpoint = sidecarEndpoint.strip(chars = {'/'}, leading = false)
+    result.model = getEnv("COWORLD_LLM_MODEL", "anthropic/claude-haiku-4.5")
+    result.curl = newCurly()
+    return
   let
     bedrockEndpoint = getEnv("AWS_ENDPOINT_URL_BEDROCK_RUNTIME").strip()
     bedrockToken = getEnv("AWS_BEARER_TOKEN_BEDROCK").strip()
@@ -141,7 +149,7 @@ proc newLlmClient*(config: GameConfig): LlmClient =
       "every turn is falling back to the scripted layer"
 
 proc requestFor*(
-  client: LlmClient, system, user: string
+  client: LlmClient, system, user: string, slot: int
 ): tuple[url: string, headers: HttpHeaders, body: string] =
   ## One Messages-API request, shaped for whichever transport is live.
   var body = %*{
@@ -156,6 +164,11 @@ proc requestFor*(
     if client.bedrockToken.len > 0:
       headers["authorization"] = "Bearer " & client.bedrockToken
     result.url = client.bedrockUrl()
+  elif client.transport == ltSidecar:
+    body["model"] = %client.model
+    headers["X-Coworld-Player-Slot"] = $slot
+    headers["anthropic-version"] = AnthropicVersion
+    result.url = client.sidecarEndpoint & "/v1/messages"
   else:
     body["model"] = %client.model
     ## Only the Claude 5 / Opus tiers accept an effort setting; Haiku 4.5

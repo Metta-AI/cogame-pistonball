@@ -115,8 +115,7 @@ suite "the manifest":
     check manifest["episode_timeout_minutes"].getInt == 20
     check manifest["game"]["runnable"]["image"].getStr() == "{{PISTONBALL_IMAGE}}"
     check manifest["game"]["runnable"]["run"][0].getStr() == "/bin/pistonball"
-    check manifest["game"]["runnable"]["env"]["ANTHROPIC_API_KEY_URI"].getStr() ==
-      "secret://coworld/pistonball/anthropic_api_key"
+    check not manifest["game"]["runnable"].hasKey("env")
     check manifest["player"][0]["run"][0].getStr() == "/bin/pistonball-player"
     check manifest["player"][0]["image"].getStr() == "{{PISTONBALL_IMAGE}}"
     # The upload validator rejects a player cpu limit below one core:
@@ -203,10 +202,9 @@ suite "the manifest":
       # 24 fps: the viewer smoke soaks for 12 s = 288 ticks of replay.
       check game.tickCount >= ticks
 
-  test "the secret namespace equals game.name, and compose agrees on the image":
+  test "hosted inference needs no provider secret, and compose agrees on the image":
     let name = manifest["game"]["name"].getStr()
-    check "secret://coworld/" & name & "/anthropic_api_key" ==
-      manifest["game"]["runnable"]["env"]["ANTHROPIC_API_KEY_URI"].getStr()
+    check not manifest["game"]["runnable"].hasKey("env")
     let compose = readFile(root / "compose.yaml")
     check "  " & name & ":" in compose
     check "image: coworld-" & name & ":latest" in compose
