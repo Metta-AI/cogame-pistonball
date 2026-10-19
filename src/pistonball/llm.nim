@@ -182,7 +182,8 @@ Schema:
 
 proc systemPrompt*(selection: PromptSelection, config: GameConfig): string =
   let cadence = formatFloat(float(config.turnTicks) / 24.0, ffDecimal, 1)
-  let idleCost = formatFloat(float(config.maxTicks) * 0.01, ffDecimal, 0)
+  var idleCost = formatFloat(float(config.maxTicks) * 0.01, ffDecimal, 2)
+  idleCost.trimZeros()
   if selection.selectedVariant == pvCanonical:
     return CanonicalIntroduction & Rules.replace("9.4", cadence).replace("-18.", "-" & idleCost & ".") & ReplyRules
   let bank = "You control one piston in a row of twenty beneath a heavy ball. Together, " &
