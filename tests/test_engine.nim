@@ -3,14 +3,13 @@
 ## The player-response batch is exercised with typed no-credential replies,
 ## matching the state certification runs in.
 
-import pistonball/prompts
 import
   std/[json, monotimes, os, strutils, times, unittest],
   ../src/pistonball/[sim, roster, scripts, control, baselines, decide],
   ./helpers
 
 proc llmEngine(game: SimServer): DecisionEngine =
-  result = initDecisionEngine(game, PromptSelection())
+  result = initDecisionEngine(game)
   for seat in 0 ..< result.seats.len:
     result.seats[seat].isLlm = true
     result.seats[seat].registered = true
@@ -310,7 +309,7 @@ suite "the decision turn":
   test "a seat with a script keeps it; a seat without one plays wavebot":
     var game = seatedSim(testConfig())
     game.phase = Playing
-    var engine = initDecisionEngine(game, PromptSelection())
+    var engine = initDecisionEngine(game)
     check not engine.haveScript[3]
     let fallback = engine.scriptFor(game, 3)
     check fallback.mode == modeWave           # wavebot's shape
@@ -323,7 +322,7 @@ suite "the decision turn":
   test "a scripted seat never produces a fallback record":
     var game = seatedSim(testConfig())
     game.phase = Playing
-    var engine = initDecisionEngine(game, PromptSelection())
+    var engine = initDecisionEngine(game)
     for seat in 0 ..< engine.seats.len:
       engine.seats[seat].baseline = blMetronome
     let records = engine.turn(game, 0, 0)
@@ -356,7 +355,7 @@ suite "the decision turn":
   test "the shared-reward delta is the ONLY global scalar, and it rolls per turn":
     var game = seatedSim(testConfig())
     game.phase = Playing
-    var engine = initDecisionEngine(game, PromptSelection())
+    var engine = initDecisionEngine(game)
     game.progressMilli = 8000
     game.penaltyMilli = 1580
     discard engine.turn(game, 1, 0)

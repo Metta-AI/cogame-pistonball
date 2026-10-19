@@ -154,8 +154,6 @@ jobs:
           nim c --parallelBuild:1 -d:release --hints:off --path:src -o:/tmp/pistonball-train-bridge tools/train_bridge.nim
           python3 tools/test_train_bridge.py /tmp/pistonball-train-bridge
           python3 tools/test_prompt_games.py /tmp/pistonball-train-bridge
-          nim c --parallelBuild:1 -d:release --hints:off --path:src -o:/tmp/pistonball-exporter tools/export_posttrain.nim
-          python3 tools/test_source_prompts.py /tmp/pistonball-exporter /tmp/pistonball-source-prompts
 
   # ---------------------------------------------------------------------
   # Packaging smoke: the production image builds, and one real episode runs

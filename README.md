@@ -23,4 +23,4 @@ records, and it is what the static wasm viewer re-simulates.
 Rules: docs/RULES.md. Wire protocol: docs/PROTOCOL.md. Writing a program:
 docs/SCRIPTS.md.
 
-Prompt variants, private evidence, and complete-game validation: [training guide](docs/TRAINING.md).
+Prompt variants, training exports, and complete-game validation: [training guide](docs/TRAINING.md).

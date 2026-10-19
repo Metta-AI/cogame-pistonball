@@ -25,16 +25,13 @@
 
 import
   std/[json, math, monotimes, os, times],
-  ./sim, ./roster, ./scripts, ./control, ./baselines, ./prompts, ./llm
+  ./sim, ./roster, ./scripts, ./control, ./baselines
 
 type
   BatchCall* = object
     seat*: int
     view*: string
     retry*: bool
-    promptSelection*: PromptSelection
-    system*: string
-    attemptId*: string
 
   BatchReply* = object
     seat*: int
@@ -63,11 +60,6 @@ type
     vyUm*: int32
 
   DecisionEngine* = object
-    promptSelection*: PromptSelection
-    attemptIds*: seq[seq[string]]
-    attemptOutcomes*: seq[seq[JsonNode]]
-    selectedAttemptIds*: seq[string]
-    decisionViews*: seq[JsonNode]
     batch*: BatchFn
     seats*: seq[SeatPolicy]
     scripts*: seq[PistonScript]
@@ -85,8 +77,7 @@ const
     ## eight decisions per episode this local history is the seat's memory,
     ## and it is the only history it gets.
 
-proc initDecisionEngine*(sim: SimServer, selection: PromptSelection): DecisionEngine =
-  result.promptSelection = selection
+proc initDecisionEngine*(sim: SimServer): DecisionEngine =
   let seats = sim.seatCount()
   result.seats = newSeq[SeatPolicy](seats)
   result.scripts = newSeq[PistonScript](seats)
@@ -343,12 +334,6 @@ proc turn*(
     (sim.penaltyMilli - sim.turnStartPenaltyMilli)
   sim.turnStartProgressMilli = sim.progressMilli
   sim.turnStartPenaltyMilli = sim.penaltyMilli
-  engine.attemptIds = newSeq[seq[string]](engine.seats.len)
-  engine.attemptOutcomes = newSeq[seq[JsonNode]](engine.seats.len)
-  engine.selectedAttemptIds = newSeq[string](engine.seats.len)
-  engine.decisionViews = newSeq[JsonNode](engine.seats.len)
-  for seat in 0 ..< engine.seats.len:
-    engine.decisionViews[seat] = engine.windowView(sim, seat, turnIndex)
   let budget = initDuration(milliseconds = max(1, sim.config.turnBudgetMs))
 
   # --- budget guard: settle EARLY rather than overrun -----------------------
@@ -420,20 +405,14 @@ proc turn*(
       if attempt == 0: sim.config.attempt1Ms else: sim.config.retryMs
     var calls: seq[BatchCall]
     for seat in open:
-      let attemptId = "turn-" & $turnIndex & "-seat-" & $seat & "-attempt-" & $(attempt + 1)
-      engine.attemptIds[seat].add(attemptId)
       calls.add BatchCall(seat: seat,
-        view: $engine.decisionViews[seat], retry: attempt > 0,
-        promptSelection: engine.promptSelection, system: engine.promptSelection.systemPrompt(),
-        attemptId: attemptId)
+        view: $engine.windowView(sim, seat, turnIndex), retry: attempt > 0)
     let started = getMonoTime()
     let replies = engine.batch(calls, max(1, deadlineMs div 1000))
     let latency = (getMonoTime() - started).inMilliseconds.int
     var stillOpen: seq[int]
     for position, seat in open:
       var cause = "parse_error"
-      var failure = ""
-      var parsedAction = newJNull()
       try:
         let reply = replies[position]
         if not reply.ok:
@@ -447,10 +426,7 @@ proc turn*(
         script.latencyMs = latency
         engine.scripts[seat] = script
         engine.haveScript[seat] = true
-        engine.selectedAttemptIds[seat] = calls[position].attemptId
-        parsedAction = script.scriptAction()
       except CatchableError as error:
-        failure = error.msg
         result.add(fallbackRecord(turnIndex, seat, attempt + 1, cause,
           error.msg))
         lastCause[seat] = cause
@@ -459,12 +435,6 @@ proc turn*(
         echo "pistonball llm: seat ", seat, " attempt ", attempt + 1,
           " failed, falling back if it fails again: ", error.msg
         stillOpen.add(seat)
-      engine.attemptOutcomes[seat].add(%*{
-        "attempt_id": calls[position].attemptId,
-        "parsed_action": parsedAction, "accepted": parsedAction.kind != JNull,
-        "failure": (if parsedAction.kind == JNull: %cause else: newJNull()),
-        "error": failure
-      })
     open = stillOpen
     inc attempt
     var retryable: seq[int]

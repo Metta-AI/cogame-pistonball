@@ -4,7 +4,6 @@
 ## contains nothing outside that seat's own +/-1.00 m window except the clock
 ## and one scalar shared-reward delta.
 
-import pistonball/prompts
 import
   std/[json, random, strutils, unittest],
   bitworld/spriteprotocol,
@@ -15,7 +14,7 @@ suite "locality":
   test "the ball appears IFF its centre is inside this seat's window":
     var rng = initRand(20260826)
     var game = seatedSim(testConfig())
-    var engine = initDecisionEngine(game, PromptSelection())
+    var engine = initDecisionEngine(game)
     for _ in 0 ..< 200:
       game.scrambleState(rng)
       for seat in 0 ..< game.seatCount():
@@ -28,7 +27,7 @@ suite "locality":
   test "exactly the columns i-2 .. i+2 are reported, and no others":
     var rng = initRand(101)
     var game = seatedSim(testConfig())
-    var engine = initDecisionEngine(game, PromptSelection())
+    var engine = initDecisionEngine(game)
     for _ in 0 ..< 200:
       game.scrambleState(rng)
       for seat in 0 ..< game.seatCount():
@@ -46,7 +45,7 @@ suite "locality":
   test "the composed message carries no other seat's script and no global state":
     var game = seatedSim(testConfig())
     game.phase = Playing
-    var engine = initDecisionEngine(game, PromptSelection())
+    var engine = initDecisionEngine(game)
     # Give every seat a DISTINCTIVE note and say, then prove seat 0's message
     # contains none of them.
     for seat in 0 ..< game.seatCount():
@@ -77,7 +76,7 @@ suite "locality":
     game.phase = Playing
     for seat in 0 ..< game.seatCount():
       game.seatNames[seat] = "REALNAME" & $seat
-    var engine = initDecisionEngine(game, PromptSelection())
+    var engine = initDecisionEngine(game)
     for seat in 0 ..< game.seatCount():
       let message = $engine.windowView(game, seat, 1)
       check "REALNAME" notin message

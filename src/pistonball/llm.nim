@@ -154,7 +154,9 @@ you: you choose WHEN to act and HOW FAR to move, it does the reacting.
 Everyone in the bank gets the SAME score: +100 for delivering the ball to the
 left wall, minus 0.24 points for every second the run takes. Doing nothing
 scores -18.
-Reply with a single JSON object and NOTHING else. Your reply MUST begin with '{'.
+"""
+
+const ReplyRules = """Reply with a single JSON object and NOTHING else. Your reply MUST begin with '{'.
 Schema:
 {"note":"<=160 chars, your reasoning",
  "mode":"wave"|"lift"|"drop"|"hold"|"catch"|"ripple",
@@ -178,17 +180,37 @@ Schema:
  "say":"<=48 chars"}     // spectators only; no other piston ever sees it
 """
 
-proc systemPrompt*(selection: PromptSelection): string =
-  let introduction = case selection.selectedVariant
-    of pvCanonical: CanonicalIntroduction
-    of pvPlain: "You control one piston among twenty standing side by side beneath a heavy ball. Together, the bank must roll the ball left from the right wall to the left wall.\n"
-    of pvNumbered: "1. You control ONE of twenty pistons standing side by side under a heavy ball.\n2. The bank must roll the ball LEFT, from the right wall to the left wall.\n"
-    of pvQuestions: "What do you control? One of twenty pistons standing side by side beneath a heavy ball. What is the bank's task? Roll the ball LEFT from the right wall to the left wall.\n"
-    of pvReordered: "Roll the heavy ball LEFT, from the right wall to the left wall: that is the bank's job. The bank contains twenty pistons standing side by side beneath the ball, and you control ONE of them.\n"
-    of pvHeldoutBriefing: "Your assignment is one piston in a row of twenty beneath a heavy ball. The row works to roll that ball from the right wall to the left wall.\n"
-    of pvHeldoutReference: "Controlled unit: one piston. Bank: twenty pistons standing side by side beneath a heavy ball. Bank objective: roll the ball leftward, from the right wall to the left wall.\n"
-    of pvMixed: raise newException(ValueError, "mixed selection must resolve to a training wording")
-  introduction & Rules
+proc systemPrompt*(selection: PromptSelection, config: GameConfig): string =
+  let cadence = formatFloat(float(config.turnTicks) / 24.0, ffDecimal, 1)
+  let idleCost = formatFloat(float(config.maxTicks) * 0.01, ffDecimal, 0)
+  if selection.selectedVariant == pvCanonical:
+    return CanonicalIntroduction & Rules.replace("9.4", cadence).replace("-18.", "-" & idleCost & ".") & ReplyRules
+  let bank = "You control one piston in a row of twenty beneath a heavy ball. Together, " &
+    "move the ball LEFT from the right wall to the left wall. Piston 0 borders the left " &
+    "goal; piston 19 is at the right starting end. Each piston is 0.40 metres wide and " &
+    "moves between 0.00 and 1.60 metres high at up to 1.92 metres/second. Pistons lift " &
+    "the ball and cannot be pushed down by it."
+  let visibility = "Your window extends one metre to either side, covering five piston columns. " &
+    "The ball is visible only inside that window and is absent most of the time. Use your " &
+    "last sighting and neighbouring piston heights while it is unseen. You cannot talk to " &
+    "other pistons, and they never receive anything you write."
+  let motion = "The ball rolls downhill. To move it left, raise pistons BEHIND it, on its " &
+    "RIGHT at larger x, and lower pistons IN FRONT, on its LEFT. Raising early creates " &
+    "a wall the ball cannot climb; raising late misses it after it passes. Timing matters."
+  let control = "Set your program every " & cadence & " seconds for the next " & cadence &
+    " seconds. A deterministic controller watches your window and runs the program 24 " &
+    "times each second. Choose when to react and how far to move; the controller executes those reactions."
+  let reward = "All twenty pistons receive the same score: +100 for delivery to the left wall, " &
+    "minus 0.24 points per second spent. Doing nothing for the full configured run scores -" & idleCost & "."
+  let briefing = case selection.selectedVariant
+    of pvPlain: bank & "\n\n" & visibility & "\n\n" & motion & "\n\n" & control & "\n\n" & reward
+    of pvNumbered: "1. Bank\n" & bank & "\n2. Visibility\n" & visibility & "\n3. Rolling\n" & motion & "\n4. Program\n" & control & "\n5. Shared score\n" & reward
+    of pvQuestions: "What are we trying to achieve?\n" & bank & "\nHow are we scored?\n" & reward & "\nWhat can I see?\n" & visibility & "\nHow do I move the ball?\n" & motion & "\nWhen do I act?\n" & control
+    of pvReordered: "TEAM SCORE\n" & reward & "\nPROGRAM TIMING\n" & control & "\nINFORMATION\n" & visibility & "\nROLLING\n" & motion & "\nBANK\n" & bank
+    of pvHeldoutBriefing: "Read the assignment.\n" & bank & "\nAccount for limited sight.\n" & visibility & "\nPlan the slope.\n" & motion & "\nSchedule the controller.\n" & control & "\nEvaluate the outcome.\n" & reward
+    of pvHeldoutReference: "Visibility reference: " & visibility & "\nScoring reference: " & reward & "\nMotion reference: " & motion & "\nTiming reference: " & control & "\nGeometry reference: " & bank
+    of pvCanonical, pvMixed: raise newException(ValueError, "alternate wording must resolve")
+  briefing & "\n\n" & ReplyRules
 
 proc operatorBlock*(prompt: string): string =
   ## The seat's own PLAYER_PROMPT, under a heading that tells the model how

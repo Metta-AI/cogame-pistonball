@@ -106,9 +106,9 @@ proc hostedScript(candidate: JsonNode): JsonNode =
     "blind": candidate["blind"]}
 
 proc decision(view: JsonNode, seat, id: int, selection: PromptSelection,
-    textMode: bool): JsonNode =
+    config: GameConfig, textMode: bool): JsonNode =
   let user = userMessage(OperatorPrompt, $view)
-  let system = systemPrompt(selection)
+  let system = systemPrompt(selection, config)
   let semantic = copy(view)
   semantic["prompt_template"] = selection.promptMetadata(system, user)
   var properties = newJObject()
@@ -179,14 +179,14 @@ when isMainModule:
         discard game.addPlayer("policy-" & $actor, actor, "", trusted = true)
       let idle = newSeq[uint8](PistonCount)
       while game.phase != Playing: game.step(idle)
-      engine = initDecisionEngine(game, selection)
+      engine = initDecisionEngine(game)
       engine.observe(game)
       turn = 0
       for actor in 0 ..< PistonCount:
         views[actor] = engine.windowView(game, actor, turn)
       seat = 0
       id = 0
-      response = views[seat].decision(seat, id, selection, textMode)
+      response = views[seat].decision(seat, id, selection, game.config, textMode)
     of "encode":
       doAssert game.phase != GameOver
       response = %*{"decision_id": id,
@@ -212,7 +212,7 @@ when isMainModule:
       inc seat
       var observation: JsonNode
       if seat < PistonCount:
-        observation = views[seat].decision(seat, id, selection, textMode)
+        observation = views[seat].decision(seat, id, selection, game.config, textMode)
       else:
         engine.closeTurn()
         while game.phase != GameOver:
@@ -243,7 +243,7 @@ when isMainModule:
           seat = 0
           for actor in 0 ..< PistonCount:
             views[actor] = engine.windowView(game, actor, turn)
-          observation = views[seat].decision(seat, id, selection, textMode)
+          observation = views[seat].decision(seat, id, selection, game.config, textMode)
       response = %*{"kind": "accepted", "action": executed,
         "observation": observation}
     else:

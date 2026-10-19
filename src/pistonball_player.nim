@@ -11,11 +11,11 @@
 ##     --run /bin/pistonball-player --secret-env PLAYER_PROMPT="<your strategy>"
 
 import
-  std/[json, monotimes, options, os, strutils, times],
+  std/[json, options, os, strutils],
   bitworld/spriteprotocol,
   curly,
   whisky,
-  pistonball/[llm, scripts, sim_config, prompts, evidence]
+  pistonball/[llm, scripts, sim_config]
 
 const
   ConnectAttempts = 240      ## 240 x 500 ms = 2 minutes of dialling.
@@ -124,43 +124,17 @@ when isMainModule:
               reply["cause"] = %"no_credentials"
               reply["error"] = %"no_credentials"
             else:
-              let started = getMonoTime()
-              let system = decision["system"].getStr()
-              var user = userMessage(prompt, $decision["view"])
-              if decision["retry"].getBool():
-                user.add("\n\nYour previous reply was unusable. Return only JSON.")
-              let request = client.requestFor(system, user, -1)
-              let captureDir = getEnv("PISTONBALL_ATTEMPT_TRACE_DIR")
-              let attemptId = decision["attempt_id"].getStr()
-              let evidencePath = captureDir / (attemptId & ".jsonl")
-              if captureDir.len > 0:
-                let metadata = decision["prompt_selection"]
-                let selection = promptSelection(%*{
-                  "promptVariant": metadata["selection"], "promptSeed": metadata["seed"]})
-                doAssert metadata == selection.selectionMetadata()
-                doAssert system == selection.systemPrompt()
-                writePrivate(evidencePath, $(%*{
-                  "schema_version": 1, "event_type": "attempt_started", "visibility": "private",
-                  "attempt_id": attemptId, "decision_id": decision["id"], "seat": decision["seat"],
-                  "source_revision": getEnv("PISTONBALL_SOURCE_REVISION"),
-                  "prompt_configuration": selection.promptMetadata(system, user),
-                  "prompt": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                  "request": {"url": request.url, "body": parseJson(request.body)}
-                }) & "\n")
-              var rawResponse = ""
-              var responseText = ""
-              var httpStatus = 0
-              var responseHeaders = newJObject()
               try:
                 client.throttled = false
+                var user = userMessage(prompt, $decision["view"])
+                if decision["retry"].getBool():
+                  user.add("\n\nYour previous reply was unusable. Return only JSON.")
+                let request = client.requestFor(
+                  decision["system"].getStr(), user, -1)
                 let response = client.curl.post(request.url,
                   request.headers, request.body, timeoutSeconds)
-                rawResponse = response.body
-                httpStatus = response.code
-                for header in response.headers:
-                  responseHeaders[header[0]] = %header[1]
-                responseText = client.textOf(response, "", request.url)
-                reply["action"] = extractJsonObject(responseText)
+                reply["action"] = extractJsonObject(
+                  client.textOf(response, "", request.url))
               except ScriptError as error:
                 reply["cause"] = %"parse_error"
                 reply["error"] = %error.msg
@@ -168,15 +142,6 @@ when isMainModule:
                 reply["cause"] = %(if kind == "prompt" and client.throttled:
                     "throttled" else: "transport_error")
                 reply["error"] = %error.msg
-              if captureDir.len > 0:
-                appendPrivate(evidencePath, %*{
-                  "schema_version": 1, "event_type": "attempt_finished", "visibility": "private",
-                  "attempt_id": attemptId, "decision_id": decision["id"], "seat": decision["seat"],
-                  "raw_response": rawResponse, "response": responseText,
-                  "response_headers": responseHeaders, "http_status": httpStatus,
-                  "latency_ms": (getMonoTime() - started).inMilliseconds,
-                  "player_reply": reply
-                })
             socket.send($reply, TextMessage)
           continue
         inc sessionFrames
