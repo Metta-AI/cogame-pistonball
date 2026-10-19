@@ -1,6 +1,7 @@
 ## Persistent JSONL bridge for Metta RL and native PufferLib.
 ## nim c -d:release --path:src -o:pistonball-train-bridge tools/train_bridge.nim
 
+import pistonball/prompts
 import std/[json, os]
 import pistonball/[sim, scripts, baselines, decide, llm]
 
@@ -104,25 +105,47 @@ proc hostedScript(candidate: JsonNode): JsonNode =
     "speed": candidate["speed255"].getInt().float / 255.0,
     "blind": candidate["blind"]}
 
-proc decision(view: JsonNode, seat, id: int): JsonNode =
+proc decision(view: JsonNode, seat, id: int, selection: PromptSelection,
+    textMode: bool): JsonNode =
+  let user = userMessage(OperatorPrompt, $view)
+  let system = systemPrompt(selection)
+  let semantic = copy(view)
+  semantic["prompt_template"] = selection.promptMetadata(system, user)
   var properties = newJObject()
   var required = newJArray()
   for head in heads():
     let name = head["name"].getStr()
     properties[name] = %*{"enum": head["choices"]}
     required.add(%name)
+  if textMode:
+    properties = %*{
+      "note": {"type": "string", "maxLength": MaxNoteRunes},
+      "mode": {"enum": Modes},
+      "trigger_m": {"type": "number", "minimum": 0, "maximum": 1},
+      "lead_ticks": {"type": "integer", "minimum": 0, "maximum": 24},
+      "up_m": {"type": "number", "minimum": 0, "maximum": 1.6},
+      "down_m": {"type": "number", "minimum": 0, "maximum": 1.6},
+      "idle_m": {"type": "number", "minimum": 0, "maximum": 1.6},
+      "speed": {"type": "number", "minimum": 0, "maximum": 1},
+      "blind": {"enum": Blinds},
+      "say": {"type": "string", "maxLength": MaxSayRunes}}
+    required = %*["mode", "trigger_m", "lead_ticks", "up_m", "down_m",
+      "idle_m", "speed", "blind"]
   %*{"kind": "decision", "game": "pistonball", "decision_id": id,
     "seat": seat, "engine_seat": seat, "turn": view["turn"],
-    "semantic_view": view, "inbox": [],
-    "messages": [{"role": "system", "content": SystemPrompt},
-      {"role": "user", "content": userMessage(OperatorPrompt, $view)}],
+    "semantic_view": semantic, "inbox": [],
+    "messages": [{"role": "system", "content": system},
+      {"role": "user", "content": user}],
     "speech_messages": [],
     "action_schema": {"type": "object", "properties": properties,
       "required": required}, "typed_question": newJNull()}
 
 when isMainModule:
   let args = commandLineParams()
-  if args.len != 2: quit("usage: pistonball-train-bridge MANIFEST VARIANT", 1)
+  if args.len notin 2 .. 3:
+    quit("usage: pistonball-train-bridge MANIFEST VARIANT [text]", 1)
+  let textMode = args.len == 3
+  if textMode: doAssert args[2] == "text"
   let variant = args[1]
   doAssert variant in Variants
   let manifest = parseFile(args[0])
@@ -130,6 +153,7 @@ when isMainModule:
   for entry in manifest["variants"]:
     if entry["id"].getStr() == variant: variantConfig = entry["game_config"]
   doAssert not variantConfig.isNil
+  var selection: PromptSelection
   var game: SimServer
   var engine: DecisionEngine
   var views: array[PistonCount, JsonNode]
@@ -142,6 +166,11 @@ when isMainModule:
     case request["kind"].getStr()
     of "reset":
       doAssert request["players"].getInt() == PistonCount
+      selection = promptSelection(request)
+      let split = if request.hasKey("split"): request["split"].getStr() else: "train"
+      doAssert split in ["train", "validation", "test"]
+      if split == "train" and selection.selectedVariant in {pvHeldoutBriefing, pvHeldoutReference}:
+        raise newException(ValueError, "held-out wording cannot enter training")
       var config = defaultGameConfig()
       config.update($variantConfig)
       config.seed = seedOf(request["seed"].getStr())
@@ -150,43 +179,40 @@ when isMainModule:
         discard game.addPlayer("policy-" & $actor, actor, "", trusted = true)
       let idle = newSeq[uint8](PistonCount)
       while game.phase != Playing: game.step(idle)
-      engine = DecisionEngine(
-        seats: newSeq[SeatPolicy](PistonCount),
-        scripts: newSeq[PistonScript](PistonCount),
-        haveScript: newSeq[bool](PistonCount),
-        sightings: newSeq[seq[Sighting]](PistonCount),
-        sightingCounts: newSeq[int](PistonCount),
-        params: DefaultBaselineParams)
-      for actor in 0 ..< PistonCount:
-        engine.scripts[actor] = defaultScript()
+      engine = initDecisionEngine(game, selection)
       engine.observe(game)
       turn = 0
       for actor in 0 ..< PistonCount:
         views[actor] = engine.windowView(game, actor, turn)
       seat = 0
       id = 0
-      response = views[seat].decision(seat, id)
+      response = views[seat].decision(seat, id, selection, textMode)
     of "encode":
       doAssert game.phase != GameOver
       response = %*{"decision_id": id,
         "values": views[seat].values(variant), "action_heads": heads()}
     of "teacher":
       doAssert game.phase != GameOver
-      response = %*{"response": $action(wavebotScript(game,
-        game.pistonOfSeat(seat)))}
+      let teacher = wavebotScript(game, game.pistonOfSeat(seat))
+      response = %*{"response": $(if textMode: teacher.scriptAction() else: action(teacher))}
     of "step":
       doAssert game.phase != GameOver and request["decision_id"].getInt() == id
-      let candidate = parseJson(request["response"].getStr())
-      for head in heads():
-        doAssert candidate[head["name"].getStr()] in head["choices"]
-      engine.scripts[seat] = parsePistonScript(candidate.hostedScript(),
+      let candidate = extractJsonObject(request["response"].getStr())
+      if not textMode:
+        for head in heads():
+          doAssert candidate[head["name"].getStr()] in head["choices"]
+      let parsed = parsePistonScript(
+        if textMode: candidate else: candidate.hostedScript(),
         engine.scripts[seat], engine.haveScript[seat])
+      if not textMode: doAssert action(parsed) == candidate
+      let executed = if textMode: parsed.scriptAction() else: action(parsed)
+      engine.scripts[seat] = parsed
       engine.haveScript[seat] = true
       inc id
       inc seat
       var observation: JsonNode
       if seat < PistonCount:
-        observation = views[seat].decision(seat, id)
+        observation = views[seat].decision(seat, id, selection, textMode)
       else:
         engine.closeTurn()
         while game.phase != GameOver:
@@ -217,8 +243,8 @@ when isMainModule:
           seat = 0
           for actor in 0 ..< PistonCount:
             views[actor] = engine.windowView(game, actor, turn)
-          observation = views[seat].decision(seat, id)
-      response = %*{"kind": "accepted", "action": candidate,
+          observation = views[seat].decision(seat, id, selection, textMode)
+      response = %*{"kind": "accepted", "action": executed,
         "observation": observation}
     else:
       raise newException(ValueError, "unknown command: " & request["kind"].getStr())

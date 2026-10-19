@@ -319,6 +319,17 @@ proc scriptJson*(script: PistonScript): JsonNode =
     "blind": $script.blind
   }
 
+proc scriptAction*(script: PistonScript): JsonNode =
+  ## Exact normalized action for private decision evidence and text training.
+  %*{"note": script.note, "mode": $script.mode,
+    "trigger_m": float(script.triggerUm) / 1_000_000.0,
+    "lead_ticks": script.leadTicks,
+    "up_m": float(script.upUm) / 1_000_000.0,
+    "down_m": float(script.downUm) / 1_000_000.0,
+    "idle_m": float(script.idleUm) / 1_000_000.0,
+    "speed": float(script.speed255) / 255.0,
+    "blind": $script.blind, "say": script.say}
+
 proc scriptRecord*(
   script: PistonScript, turn, seat, piston: int, alias: string
 ): JsonNode =

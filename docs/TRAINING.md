@@ -1,37 +1,53 @@
 # Metta post-training data
 
-The native simulator and published `wavebot` policy can export supervised
-examples for both certified variants:
+The exporter writes private candidate episodes from complete twenty-seat games.
+It requires a clean committed checkout and preserves published game budgets.
+Every action passes through the production reply parser and controller.
 
 ```sh
 nimby sync nimby.lock
 nim r -d:release --path:src tools/export_posttrain.nim \
-  /tmp/pistonball-default 10 1 default
+  /tmp/pistonball-default 10 1 default mixed 42
 nim r -d:release --path:src tools/export_posttrain.nim \
-  /tmp/pistonball-sprint 10 1 sprint
+  /tmp/pistonball-sprint 10 1 sprint canonical 0
 ```
 
-Each run reads its exact manifest variant config and plays complete seeded,
-twenty-seat games. The exporter records the hosted system prompt, each seat's
-one-metre window, and a `wavebot` script that round-trips through the game's
-reply parser. Splits are by game seed. The manifest records source revision,
-variant, scores, wins, and row counts. Existing output directories are never
-overwritten.
+Outputs are `trajectories.jsonl` and `manifest.json`, created exclusively with
+mode 0600. Each decision records exact prompts, hashes, teacher provenance,
+parsed and executed actions, and a terminal marker. Episode records contain
+final outcomes and participant scores. Natural early delivery remains valid.
 
-Train either output with Metta post-training:
+These files are candidates, not ready-to-train datasets. The shared Coworld SDK
+and application importer own independent review, deduplication, and splitting.
+Group every wording and game variant by `seed_family` (`pistonball-SEED`).
+The exporter rejects held-out wordings and never creates train/validation files.
+
+## Prompt diversity
+
+Bank `pistonball-rules-v1` has five training introductions: `canonical`, `plain`,
+`numbered`, `questions`, and `reordered`. `heldout-briefing` and
+`heldout-reference` are reserved for evaluation. All share identical mechanics,
+privacy rules, strategy hints, and response schema. Canonical text is unchanged.
+
+Set game configuration `promptVariant` and nonnegative `promptSeed`.
+`mixed` requires an explicit seed and selects `promptSeed % 5` without consuming
+simulation randomness. Selection stays fixed throughout the episode and retries.
+Defaults select canonical wording. Use the same game seed, seats, policies,
+model settings, and budgets when comparing wordings. Report complete-game scores,
+invalid responses, retries, fallbacks, and failures; these checks do not establish
+post-training stability or stronger play.
+
+The bridge accepts an optional third argument `text` for native JSON scripts.
+Numeric mode retains its existing eight action heads and 66 features.
+Reset accepts `promptVariant`, `promptSeed`, and `split` (default `train`).
+Held-out wording is rejected for training. Decisions include exact system/user
+SHA-256 hashes in `semantic_view.prompt_template`.
 
 ```sh
-nix develop -c uv run --package metta-posttrain --extra train \
-  python -m metta_posttrain.train --dataset /tmp/pistonball-default \
-  --output /tmp/pistonball-adapter --model Qwen/Qwen3-0.6B \
-  --max-steps 100 --max-length 4096
+python3 tools/test_prompt_games.py /tmp/pistonball-train-bridge
+python3 tools/test_source_prompts.py /tmp/pistonball-exporter /tmp/source-panel \
+  --baseline-root /path/to/original-checkout --baseline-binary /tmp/original-exporter
 ```
-
-The local 10-game default and sprint exports each contained 160 training and
-40 validation examples, with 10/10 deliveries. All 400 examples fit a
-4096-token model context. A one-step CPU optimizer smoke reduced held-out loss
-from 5.5833 to 5.5089 (default) and 5.5254 to 5.4587 (sprint). This distills
-the scripted teacher; it does not establish stronger league play.
 
 ## Numeric training
 
@@ -62,3 +78,24 @@ The numeric bridge is for training. Ordinary players receive the private
 Prompt policies request `/v1/messages`. The game owns parsing, fallback,
 control, scoring, and replay. Upload a prompt policy with
 `--use-bedrock --bedrock-model anthropic/claude-haiku-4.5`.
+
+## Private native evidence
+
+Set `PISTONBALL_HOST_TRACE_PATH` on the game and
+`PISTONBALL_ATTEMPT_TRACE_DIR` on each player. Set `PISTONBALL_SOURCE_REVISION`
+on both to the qualified commit. Use new destinations for every episode.
+The host records private views, attempt identifiers, parser outcomes, selected
+attempts, executed scripts, and final results. Each player records its actual
+request body, exact prompts and hashes, response headers/status/body, and reply.
+Join by `attempt_id`; provider call identifiers remain in response headers.
+Operator guidance stays in player artifacts and never enters host evidence,
+public replay, or results. Evidence write failures are fatal.
+
+```sh
+python3 tools/test_native_prompts.py /tmp/pistonball /tmp/pistonball-player \
+  /tmp/native-proof COMMIT --wording questions --mode retry
+```
+
+The native harness uses a deterministic local HTTP provider and all twenty real
+players under published settings. It verifies request-to-action joins, private
+operator guidance, final results, and replay. It is not a model-quality evaluation.

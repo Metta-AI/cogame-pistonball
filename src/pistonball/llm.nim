@@ -3,7 +3,7 @@
 import
   std/[json, os, strutils],
   curly,
-  ./sim_types, ./scripts
+  ./sim_types, ./scripts, ./prompts
 
 const
   AnthropicUrl = "https://api.anthropic.com/v1/messages"
@@ -130,9 +130,12 @@ proc textOf*(
 ## model the opposite of what the controller does would make every LLM seat
 ## worse than the baseline it is measured against, in a way no test could
 ## see, because a script is legal whichever way it points.
-const SystemPrompt* = """
+const CanonicalIntroduction = """
 You are ONE piston in a bank of twenty standing side by side under a heavy ball.
 The bank's job is to roll the ball LEFT, from the right wall to the left wall.
+"""
+
+const Rules = """
 Piston 0 is at the far left, next to the goal; piston 19 is at the far right,
 where the ball starts. Each piston is 0.40 m wide and can raise its head from
 0.00 m to 1.60 m at up to 1.92 m/s. Pistons are solid: they lift the ball, the
@@ -174,6 +177,18 @@ Schema:
  "blind":"hold"|"idle"|"ripple",  // what I do while I cannot see the ball
  "say":"<=48 chars"}     // spectators only; no other piston ever sees it
 """
+
+proc systemPrompt*(selection: PromptSelection): string =
+  let introduction = case selection.selectedVariant
+    of pvCanonical: CanonicalIntroduction
+    of pvPlain: "You control one piston among twenty standing side by side beneath a heavy ball. Together, the bank must roll the ball left from the right wall to the left wall.\n"
+    of pvNumbered: "1. You control ONE of twenty pistons standing side by side under a heavy ball.\n2. The bank must roll the ball LEFT, from the right wall to the left wall.\n"
+    of pvQuestions: "What do you control? One of twenty pistons standing side by side beneath a heavy ball. What is the bank's task? Roll the ball LEFT from the right wall to the left wall.\n"
+    of pvReordered: "Roll the heavy ball LEFT, from the right wall to the left wall: that is the bank's job. The bank contains twenty pistons standing side by side beneath the ball, and you control ONE of them.\n"
+    of pvHeldoutBriefing: "Your assignment is one piston in a row of twenty beneath a heavy ball. The row works to roll that ball from the right wall to the left wall.\n"
+    of pvHeldoutReference: "Controlled unit: one piston. Bank: twenty pistons standing side by side beneath a heavy ball. Bank objective: roll the ball leftward, from the right wall to the left wall.\n"
+    of pvMixed: raise newException(ValueError, "mixed selection must resolve to a training wording")
+  introduction & Rules
 
 proc operatorBlock*(prompt: string): string =
   ## The seat's own PLAYER_PROMPT, under a heading that tells the model how

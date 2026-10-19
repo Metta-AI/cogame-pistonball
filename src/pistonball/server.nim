@@ -7,6 +7,7 @@
 ## recorded, so the wasm viewer re-derives the whole match from them without
 ## ever running either.
 
+import ./prompts, ./evidence
 import
   std/[algorithm, json, locks, monotimes, os, strutils, tables, times],
   bitworld/client as bitworldClient,
@@ -328,7 +329,9 @@ proc playerBatch(
       try:
         seatSockets[call.seat].send($( %*{
           "type": "decision", "id": requestId, "seat": call.seat,
-          "view": parseJson(call.view), "system": SystemPrompt,
+          "view": parseJson(call.view), "system": call.system,
+          "prompt_selection": call.promptSelection.selectionMetadata,
+          "attempt_id": call.attemptId,
           "retry": call.retry, "timeout_seconds": timeoutSeconds
         }), TextMessage)
       except CatchableError as error:
@@ -421,6 +424,8 @@ proc runServerLoop*(
   loadReplayPath = "",
   runtimeConfig = RuntimeConfig()
 ) =
+  let selection = promptSelection(
+    if runtimeConfig.config.len == 0: newJObject() else: parseJson(runtimeConfig.config))
   initAppState()
   if saveReplayPath.len > 0 and loadReplayPath.len > 0:
     raise newException(ReplayError, "Cannot save and load a replay together")
@@ -500,8 +505,16 @@ proc runServerLoop*(
     ServerThreadArgs(server: serverPtr, address: host, port: port))
   httpServer.waitUntilReady()
 
+  let hostTrace = getEnv("PISTONBALL_HOST_TRACE_PATH")
+  if hostTrace.len > 0:
+    doAssert not replayLoaded, "private capture requires a live game"
+    writePrivate(hostTrace, $(%*{
+      "schema_version": 1, "event_type": "host_started", "visibility": "private",
+      "source_revision": getEnv("PISTONBALL_SOURCE_REVISION"),
+      "prompt_configuration": selection.selectionMetadata(), "seed": config.seed
+    }) & "\n")
   var
-    engine = if replayLoaded: DecisionEngine() else: initDecisionEngine(sim)
+    engine = if replayLoaded: DecisionEngine() else: initDecisionEngine(sim, selection)
     lastTurnIndex = -1
     episodeStart = getMonoTime()
     lastTick = getMonoTime()
@@ -691,6 +704,18 @@ proc runServerLoop*(
             let
               script = engine.scripts[seat]
               piston = max(0, sim.pistonOfSeat(seat))
+            if hostTrace.len > 0:
+              appendPrivate(hostTrace, %*{
+                "schema_version": 1, "event_type": "host_decision", "visibility": "private",
+                "turn": turnIndex, "seat": seat, "tick": sim.tickCount,
+                "observation": engine.decisionViews[seat], "source": $script.source,
+                "prompt_selection": selection.selectionMetadata(),
+                "attempt_ids": engine.attemptIds[seat],
+                "attempt_outcomes": engine.attemptOutcomes[seat],
+                "selected_attempt_id": (if engine.selectedAttemptIds[seat].len > 0:
+                  %engine.selectedAttemptIds[seat] else: newJNull()),
+                "executed_action": script.scriptAction()
+              })
             case script.source
             of srcLlm: inc sim.llmTurns[min(seat, sim.llmTurns.high)]
             of srcFallback:
@@ -841,6 +866,10 @@ proc runServerLoop*(
         writeFile(eventsPath, collectedEvents.eventsJsonl(sim.tickCount))
         echo "Events written: ", eventsPath, " (", collectedEvents.len,
           " events)"
+      if hostTrace.len > 0:
+        appendPrivate(hostTrace, %*{
+          "schema_version": 1, "event_type": "host_finished", "visibility": "private",
+          "results": parseJson(sim.playerResultsJson())})
       if runtimeConfig.resultsUri.len > 0:
         runtimeConfig.writeResults(sim.playerResultsJson() & "\n")
       if metricsPath.len > 0:
