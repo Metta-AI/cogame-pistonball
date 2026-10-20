@@ -1,7 +1,7 @@
 ## The two scripted baselines. Both emit the SAME script object on the SAME
 ## 225-tick cadence as an LLM seat, so their output is legal by construction
-## and directly comparable, and both are pure functions of the observation a
-## seat would receive.
+## and directly comparable. Live policies consume the exact private view.
+## Explicit fixture helpers preserve historical precise simulator inputs.
 ##
 ## `wavebot` is the certification player, the per-turn fallback, and the
 ## default for a seat that registers with neither env var.
@@ -15,7 +15,7 @@
 ## `wavebot`s cannot deliver, these three numbers are wrong, not the sim.
 
 import
-  std/strutils,
+  std/[json, strutils],
   ./sim, ./scripts
 
 type
@@ -60,9 +60,7 @@ proc metronomeSay(sim: SimServer, piston: int): string =
     return "keeping the beat"
   "ripple rolling through"
 
-proc wavebotScript*(
-  sim: SimServer, piston: int, params = DefaultBaselineParams
-): PistonScript =
+proc wavebotProgram*(params: BaselineParams): PistonScript =
   ## Lift behind the ball, clear the way in front of it. Twenty of these
   ## converge on a travelling wave with NO communication at all, which is the
   ## behaviour the whole coworld is about — and the anti-regression pin of the
@@ -77,10 +75,9 @@ proc wavebotScript*(
   result.speed255 = 255
   result.blind = blindHold
   result.note = "lift behind, clear in front"
-  result.say = wavebotSay(sim, piston)
   result.source = srcScripted
 
-proc metronomeScript*(sim: SimServer, piston: int): PistonScript =
+proc metronomeProgram(): PistonScript =
   ## A blind two-second ripple that never looks at the ball. Sometimes it
   ## walks the ball a long way and sometimes it fights itself, which gives the
   ## ladder a spread and gives a champion a bad neighbour to cope with.
@@ -94,14 +91,52 @@ proc metronomeScript*(sim: SimServer, piston: int): PistonScript =
   result.speed255 = 204          ## 0.80 of MaxPistonSpeed.
   result.blind = blindRipple
   result.note = "two-second ripple, blind"
-  result.say = metronomeSay(sim, piston)
   result.source = srcScripted
 
+const PrivateViewTeacher* = "wavebot-private-view-v1"
+
+proc wavebotScript*(view: JsonNode, params = DefaultBaselineParams): PistonScript =
+  ## The live baseline and teacher consume exactly the player's rounded view.
+  result = wavebotProgram(params)
+  let ball = view["window"]["ball"]
+  if ball.kind == JNull:
+    result.say = "watching my patch"
+  elif ball["vx_m_s"].getFloat() > 0:
+    result.say = "it is coming back - catching"
+  elif ball["dx_m"].getFloat() >= 0:
+    result.say = "up behind it"
+  else:
+    result.say = "flat and out of the way"
+
+proc metronomeScript*(view: JsonNode): PistonScript =
+  result = metronomeProgram()
+  if (view["clock"]["tick"].getInt() div 225 +
+      view["you"]["piston"].getInt()) mod 2 == 0:
+    result.say = "keeping the beat"
+  else:
+    result.say = "ripple rolling through"
+
 proc scriptedScript*(
-  sim: SimServer, kind: Baseline, piston: int,
-  params = DefaultBaselineParams
+  view: JsonNode, kind: Baseline, params = DefaultBaselineParams
 ): PistonScript =
-  ## The published script for one baseline on one piston.
   case kind
-  of blWavebot: wavebotScript(sim, piston, params)
-  of blMetronome: metronomeScript(sim, piston)
+  of blWavebot: wavebotScript(view, params)
+  of blMetronome: metronomeScript(view)
+
+proc fixtureWavebotScript*(
+  sim: SimServer, piston: int, params = DefaultBaselineParams
+): PistonScript =
+  ## Historical precise input fixture. Not a private-view training policy.
+  result = wavebotProgram(params)
+  result.say = wavebotSay(sim, piston)
+
+proc fixtureMetronomeScript*(sim: SimServer, piston: int): PistonScript =
+  result = metronomeProgram()
+  result.say = metronomeSay(sim, piston)
+
+proc fixtureScriptedScript*(
+  sim: SimServer, kind: Baseline, piston: int, params = DefaultBaselineParams
+): PistonScript =
+  case kind
+  of blWavebot: fixtureWavebotScript(sim, piston, params)
+  of blMetronome: fixtureMetronomeScript(sim, piston)

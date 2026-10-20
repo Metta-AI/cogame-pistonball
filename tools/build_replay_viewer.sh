@@ -42,7 +42,7 @@ trap cleanup EXIT
 build_args=(
   --platform linux/amd64
   --file "${repo_dir}/Dockerfile.replay-viewer"
-  --target replay-viewer-builder
+  --target replay-viewer-bundle
   --tag "${image_tag}"
   "${repo_dir}"
 )
@@ -53,7 +53,7 @@ else
   # explicit amd64 platform through their Linux VM. CI installs Buildx above.
   docker build "${build_args[@]}"
 fi
-container_id="$(docker create --platform linux/amd64 "${image_tag}")"
+container_id="$(docker create --platform linux/amd64 "${image_tag}" /unused)"
 docker cp "${container_id}:/workspace/pistonball/replay-viewer/dist/." "${output_dir}"
 
 test -f "${output_dir}/index.html"

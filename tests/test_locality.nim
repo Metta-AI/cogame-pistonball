@@ -120,3 +120,23 @@ suite "locality":
     game.ballX = pistonCentreX(1)          # still outside piston 15's window
     check not inWindow(far, game.ballX)
     check pistonCommand(game, script, far) == before
+
+  test "private-view teacher cannot recover rounded-away ball direction":
+    var game = seatedSim(testConfig())
+    game.phase = Playing
+    var engine = initDecisionEngine(game)
+    let seat = 0
+    let piston = game.pistonOfSeat(seat)
+    game.ballX = pistonCentreX(piston) + 1
+    game.ballVx = 1
+    let before = engine.windowView(game, seat, 0)
+    let rawBefore = fixtureWavebotScript(game, piston)
+    game.ballX = pistonCentreX(piston) - 1
+    game.ballVx = -1
+    let after = engine.windowView(game, seat, 0)
+    check before == after
+    check rawBefore.say != fixtureWavebotScript(game, piston).say
+    check scriptJson(wavebotScript(before)) == scriptJson(wavebotScript(after))
+    check wavebotScript(before).say == wavebotScript(after).say
+    discard engine.turn(game, 0, 0)
+    check engine.scripts[seat].say == wavebotScript(after).say

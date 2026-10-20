@@ -1,40 +1,65 @@
 # Pistonball prompt diversity and training
 
-The `pistonball-rules-v3` bank offers five complete training presentations and two
-evaluation-only presentations. Wording and section order vary the bank geometry,
-local visibility, downhill rolling, program timing, and shared reward explanations.
-Action syntax, strategy hints, and privacy rules stay fixed. Alternate presentations
-use independent phrasing. Every wording, including canonical, explains net progress
-credit and elapsed-time deductions; delivery stops the run without a separate bonus.
-Sprint states an 8.3-second program cadence and -12 idle score, derived from its
-existing configuration; gameplay budgets do not change.
-
-Configure `promptVariant` and `promptSeed`. Mixed selection requires an explicit
-nonnegative seed, resolves modulo five, and stays fixed throughout the game.
-The server sends the complete rendered rules to the ordinary player using the
-existing decision protocol. Simulation randomness and the decision engine are unchanged.
-
-The bridge accepts `text` for native JSON scripts; numeric mode retains eight action
-heads and 66 features. Training resets reject held-out wording. Bridge and export
-metadata retain selection plus exact system/user message hashes.
+The canonical exporter produces complete private trajectory events. It does
+not create train/validation datasets or authorize source content.
 
 ```sh
-python3 tools/test_prompt_games.py BRIDGE
-export_posttrain PRIVATE_OUTPUT 10 1 default mixed 0
-export_posttrain PRIVATE_OUTPUT 10 1 sprint mixed 0
+nim c -d:release --path:src -o:/tmp/pistonball-export tools/export_posttrain.nim
+/tmp/pistonball-export /tmp/pistonball-default 20 1 default source-<commit>
+/tmp/pistonball-export /tmp/pistonball-sprint 20 1 sprint source-<commit>
 ```
 
-Original train/validation JSONL and manifests are retained. Every fifth scenario is
-validation; wording cycles separately inside each split. All variants share scenario
-families named `pistonball-SEED`. Episode IDs include requested selection, resolved wording, and prompt seed
-so matched exports cannot collide. Every row comes from the native parser and controller,
-with simultaneous observations frozen before scripts are installed. Natural early
-delivery remains valid. Export from clean committed source and review content before
-training. Held-out wording cannot enter source exports.
+The first five exporter arguments are required. Append `PROMPT_VARIANT PROMPT_SEED`
+to select wording. Five training wordings and two evaluation-only wordings keep
+rules, privacy, and action syntax fixed. Mixed wording cycles by scenario within
+each split. Held-out wording is rejected by the exporter and by training resets.
+Episode IDs distinguish wording; seed families group matched scenarios.
 
-Compare canonical and mixed training with fixed game seeds, seats, policies, decoder
-settings, and game budgets. Report scores, invalid replies, retries, and failures by
-wording. Scripted parity does not demonstrate resistance to training collapse.
+The bridge accepts `text` for JSON scripts; numeric mode keeps eight action heads
+and 66 features. Both modes record rendered message hashes.
+
+ Each episode uses the declared
+variant configuration and the new `wavebot-private-view-v1` teacher. The
+teacher consumes the same rounded private `windowView` as the live scripted
+baseline. Exact subpixel simulator state is not a teacher input. The ordinary
+parser installs each response; trajectories retain every actual one-byte
+control per tick and the resulting state hashes and terminal outcomes.
+
+Convert raw events with the current Metta SDK:
+
+```python
+from pathlib import Path
+from coworld.decision_trajectory import read_trajectory_jsonl, export_complete_episodes
+
+raw = Path("/tmp/pistonball-default/trajectories.jsonl")
+complete = Path("/tmp/pistonball-complete.jsonl")
+export_complete_episodes(read_trajectory_jsonl(raw), complete)
+```
+
+An independent reviewer must bind source and teacher review to the exact
+complete-episode file. Import only with that reviewer-provided authority:
+
+```python
+from metta_posttrain.hosted import HostedImportAuthority, export_hosted
+
+authority = HostedImportAuthority.model_validate_json(
+    Path("/tmp/reviewer-provided-authority.json").read_bytes()
+)
+export_hosted(
+    complete, Path("/tmp/pistonball-reviewed-dataset"),
+    target_policy="wavebot-private-view-v1", authority=authority,
+)
+```
+
+The shared importer assigns whole seed families to training or validation.
+Default and Sprint with the same seed use one `pistonball-<seed>` family.
+Existing output paths are never overwritten. Private corpora are not public
+replays, Docker assets, or automatically authorized model training data.
+
+Historical exports used the raw simulator teacher and local modulo splits.
+Their reported losses and deliveries belong to that earlier, unspecified
+source and profile. They do not qualify this private-view profile or establish
+model strength. Keep archived corpus bytes unchanged.
 
 ## Numeric training
 
@@ -63,5 +88,5 @@ Set a finite timestep limit for either trainer.
 The numeric bridge is for training. Ordinary players receive the private
 `windowView` and return a complete PistonScript through the player socket.
 Prompt policies request `/v1/messages`. The game owns parsing, fallback,
-control, scoring, and replay. Upload a prompt policy with
-`--use-bedrock --bedrock-model anthropic/claude-haiku-4.5`.
+control, scoring, and replay. The platform supplies `COWORLD_LLM_ENDPOINT` and the native model identity.
+Provider credentials are not a player configuration contract.

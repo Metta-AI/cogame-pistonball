@@ -7,10 +7,10 @@
 
 import
   std/[random, strformat, unicode, unittest],
-  ../src/pistonball/[sim, scripts, control, baselines],
+  ../src/pistonball/[sim, scripts, control, baselines, decide],
   ./helpers
 
-suite "scripted baselines":
+suite "ordinary private-view scripted baselines":
   test "500 random states x both baselines emit a LEGAL script":
     var rng = initRand(8675309)
     var game = seatedSim(testConfig())
@@ -18,7 +18,9 @@ suite "scripted baselines":
       game.scrambleState(rng)
       for kind in [blWavebot, blMetronome]:
         let piston = rng.rand(PistonCount - 1)
-        let script = scriptedScript(game, kind, piston)
+        let engine = initDecisionEngine(game)
+        let seat = game.seatOfPiston(piston)
+        let script = scriptedScript(engine.windowView(game, seat, 0), kind)
         check validScript(script)
         check script.note.runeLen <= MaxNoteRunes
         check script.say.runeLen <= MaxSayRunes
@@ -43,13 +45,13 @@ suite "scripted baselines":
     const Seeds = 20
     for i in 1 .. Seeds:
       let seed = i * 7919
-      let wave = runScripted(seed, [blWavebot])
+      let wave = runPrivateScripted(seed, [blWavebot])
       if wave.delivered():
         inc delivered
       total += wave.scoreMilli()
-      let metronome = runScripted(seed, [blMetronome])
+      let metronome = runPrivateScripted(seed, [blMetronome])
       metronomeTotal += metronome.scoreMilli()
-      let blend = runScripted(seed, [blWavebot, blMetronome])
+      let blend = runPrivateScripted(seed, [blWavebot, blMetronome])
       if blend.delivered():
         inc mixed
     let

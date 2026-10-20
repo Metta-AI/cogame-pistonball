@@ -37,18 +37,41 @@ proc scriptedCommands*(
       continue
     let kind = kinds[seat mod max(1, kinds.len)]
     result[seat] = pistonCommand(
-      game, scriptedScript(game, kind, piston, params), piston)
+      game, fixtureScriptedScript(game, kind, piston, params), piston)
 
 proc runScripted*(
   seed: int, kinds: openArray[Baseline], maxTicks = 1800,
   params = DefaultBaselineParams
 ): SimServer =
-  ## A whole twenty-seat scripted episode, headless and deterministic.
+  ## Historical precise test-input fixture. Not an ordinary policy evaluation.
   var game = seatedSim(testConfig(seed, maxTicks))
   var guard = 0
   while game.phase != GameOver and guard < maxTicks + 16:
     inc guard
     let commands = scriptedCommands(game, kinds, params)
+    game.step(commands)
+  game
+
+proc runPrivateScripted*(seed: int, kinds: openArray[Baseline],
+    maxTicks = 1800, params = DefaultBaselineParams): SimServer =
+  ## Ordinary private-view baseline turns, parser and installed controller.
+  var game = seatedSim(testConfig(seed, maxTicks))
+  var engine = initDecisionEngine(game)
+  engine.params = params
+  for seat in 0 ..< engine.seats.len:
+    engine.seats[seat].baseline = kinds[seat mod kinds.len]
+  var lastTurn = -1
+  while game.phase != GameOver:
+    if game.phase == Playing:
+      engine.observe(game)
+      let turn = game.gameTicksElapsed() div game.config.turnTicks
+      if turn != lastTurn:
+        discard engine.turn(game, turn, 0)
+        engine.closeTurn()
+        lastTurn = turn
+    var commands = newSeq[uint8](game.seatCount())
+    for piston in 0 ..< PistonCount:
+      commands[game.seatOfPiston(piston)] = engine.commandFor(game, piston)
     game.step(commands)
   game
 

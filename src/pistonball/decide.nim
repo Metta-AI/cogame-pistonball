@@ -24,12 +24,16 @@
 ## `wavebot`'s.
 
 import
-  std/[json, math, monotimes, os, times],
+  std/[json, math, monotimes, options, os, times],
+  bitworld/decision_trajectory,
   ./sim, ./roster, ./scripts, ./control, ./baselines
+
+when not defined(emscripten):
+  import bitworld/native_stop
 
 type
   BatchCall* = object
-    seat*: int
+    seat*, turn*: int
     view*: string
     retry*: bool
 
@@ -39,8 +43,10 @@ type
     action*: string
     cause*: string
     error*: string
+    origin*: AttemptOrigin
+    evidence*: Option[DecisionAttempt]
 
-  BatchFn* = proc(calls: seq[BatchCall], timeoutSeconds: int): seq[BatchReply]
+  BatchFn* = proc(calls: seq[BatchCall], deadline: MonoTime): seq[BatchReply]
     {.closure, gcsafe.}
 
   SeatPolicy* = object
@@ -70,6 +76,10 @@ type
     batchStarted*: bool
     llmOff*: bool              ## the budget guard fired; scripted from here on
     params*: BaselineParams
+    phaseViews*: seq[JsonNode]
+    phaseAttempts*: seq[seq[DecisionAttempt]]
+    phaseSelected*: seq[Option[string]]
+    phaseInstalled*: seq[bool]
 
 const
   MaxSightings* = 4
@@ -85,6 +95,7 @@ proc initDecisionEngine*(sim: SimServer): DecisionEngine =
   result.sightings = newSeq[seq[Sighting]](seats)
   result.sightingCounts = newSeq[int](seats)
   result.params = DefaultBaselineParams
+  result.phaseInstalled = newSeq[bool](seats)
   for i in 0 ..< seats:
     result.seats[i].baseline = blWavebot
     result.seats[i].label = "wavebot"
@@ -96,15 +107,19 @@ proc policyKind*(engine: DecisionEngine, seat: int): string =
   else:
     "scripted"
 
+proc windowView*(
+  engine: DecisionEngine, sim: SimServer, seat, turnIndex: int
+): JsonNode
+
 proc scriptFor*(
   engine: DecisionEngine, sim: SimServer, seat: int
 ): PistonScript =
   ## The script the controller runs for one seat: this turn's, else last
   ## turn's, else `wavebot`'s. NO failure mode leaves a piston uncommanded.
-  let piston = sim.pistonOfSeat(seat)
   if seat >= 0 and seat < engine.haveScript.len and engine.haveScript[seat]:
     return engine.scripts[seat]
-  wavebotScript(sim, max(0, piston), engine.params)
+  wavebotScript(engine.windowView(sim, seat,
+    sim.gameTicksElapsed() div sim.config.turnTicks), engine.params)
 
 proc commandFor*(
   engine: DecisionEngine, sim: SimServer, piston: int
@@ -114,7 +129,7 @@ proc commandFor*(
   ## must not.
   let seat = sim.seatOfPiston(piston)
   if seat < 0:
-    return pistonCommand(sim, wavebotScript(sim, piston, engine.params), piston)
+    return pistonCommand(sim, wavebotProgram(engine.params), piston)
   pistonCommand(sim, engine.scriptFor(sim, seat), piston)
 
 # ---------------------------------------------------------------------------
@@ -309,13 +324,14 @@ proc resultRecord*(sim: SimServer): string =
 
 proc installScripted(
   engine: var DecisionEngine, sim: SimServer, seat: int,
-  kind: Baseline, source: ScriptSource
+  kind: Baseline, source: ScriptSource, turnIndex: int
 ) =
-  let piston = max(0, sim.pistonOfSeat(seat))
-  var script = scriptedScript(sim, kind, piston, engine.params)
+  var script = scriptedScript(engine.windowView(sim, seat, turnIndex),
+    kind, engine.params)
   script.source = source
   engine.scripts[seat] = script
   engine.haveScript[seat] = true
+  engine.phaseInstalled[seat] = true
 
 proc turn*(
   engine: var DecisionEngine,
@@ -334,6 +350,12 @@ proc turn*(
     (sim.penaltyMilli - sim.turnStartPenaltyMilli)
   sim.turnStartProgressMilli = sim.progressMilli
   sim.turnStartPenaltyMilli = sim.penaltyMilli
+  engine.phaseViews = newSeq[JsonNode](engine.seats.len)
+  engine.phaseAttempts = newSeq[seq[DecisionAttempt]](engine.seats.len)
+  engine.phaseSelected = newSeq[Option[string]](engine.seats.len)
+  engine.phaseInstalled = newSeq[bool](engine.seats.len)
+  for seat in 0 ..< engine.seats.len:
+    engine.phaseViews[seat] = engine.windowView(sim, seat, turnIndex)
   let budget = initDuration(milliseconds = max(1, sim.config.turnBudgetMs))
 
   # --- budget guard: settle EARLY rather than overrun -----------------------
@@ -358,7 +380,7 @@ proc turn*(
       # An LLM seat that CANNOT call the LLM this turn is a FALLBACK, not a
       # scripted policy, and the design's `fallback.cause` enum names both
       # reasons it happens. Recording it is what makes the two countable.
-      engine.installScripted(sim, seat, blWavebot, srcFallback)
+      engine.installScripted(sim, seat, blWavebot, srcFallback, turnIndex)
       let cause = if engine.llmOff: "budget_guard" else: "no_credentials"
       result.add(fallbackRecord(turnIndex, seat, 1, cause,
         "the LLM is unavailable for this turn; playing wavebot"))
@@ -366,7 +388,7 @@ proc turn*(
         ") on turn ", turnIndex
     else:
       engine.installScripted(sim, seat, engine.seats[seat].baseline,
-        srcScripted)
+        srcScripted, turnIndex)
 
   # --- the rate floor ------------------------------------------------------
   # Twenty requests per batch against a 30-per-minute-per-episode cap: hold
@@ -374,10 +396,14 @@ proc turn*(
   # episode at 26.7 req/min. A bounded, stop-interruptible sleep. The cert
   # fixture sets it to 0, so offline runs pay nothing.
   if open.len > 0 and engine.batchStarted and sim.config.minBatchSpacingMs > 0:
-    let since = (getMonoTime() - engine.lastBatchStart).inMilliseconds.int
-    if since < sim.config.minBatchSpacingMs:
-      sleep(min(sim.config.minBatchSpacingMs,
-        sim.config.minBatchSpacingMs - since))
+    let spacingDeadline = engine.lastBatchStart +
+      initDuration(milliseconds = sim.config.minBatchSpacingMs)
+    while getMonoTime() < spacingDeadline:
+      when not defined(emscripten):
+        if interruptionRequested(): break
+      sleep(max(1, min(5, int((spacingDeadline - getMonoTime()).inMilliseconds))))
+  when not defined(emscripten):
+    if interruptionRequested(): return
   if open.len > 0:
     engine.lastBatchStart = getMonoTime()
     engine.batchStarted = true
@@ -405,27 +431,46 @@ proc turn*(
       if attempt == 0: sim.config.attempt1Ms else: sim.config.retryMs
     var calls: seq[BatchCall]
     for seat in open:
-      calls.add BatchCall(seat: seat,
+      calls.add BatchCall(seat: seat, turn: turnIndex,
         view: $engine.windowView(sim, seat, turnIndex), retry: attempt > 0)
     let started = getMonoTime()
-    let replies = engine.batch(calls, max(1, deadlineMs div 1000))
+    let deadline = min(turnStart + budget,
+      started + initDuration(milliseconds = max(1, deadlineMs)))
+    let replies = engine.batch(calls, deadline)
     let latency = (getMonoTime() - started).inMilliseconds.int
     var stillOpen: seq[int]
     for position, seat in open:
+      let reply = replies[position]
+      var retained = reply.evidence
       var cause = "parse_error"
       try:
-        let reply = replies[position]
+        if getMonoTime() >= deadline:
+          cause = "timeout"
+          raise newException(ValueError, "player response exceeded the issued deadline")
         if not reply.ok:
           cause = if reply.cause.len > 0: reply.cause else: "transport_error"
           raise newException(ValueError, reply.error)
+        let proposal = parseJson(reply.action)
+        if retained.isSome:
+          var evidence = retained.get()
+          evidence.parsedAction = proposal
+          retained = some(evidence)
         var script = parsePistonScript(
-          parseJson(reply.action),
+          proposal,
           engine.scripts[seat],
           engine.haveScript[seat])
-        script.source = srcLlm
+        script.source = if reply.origin == aoModel and
+          proposal == appliedScriptAction(script): srcLlm else: srcFallback
+        if retained.isSome:
+          var evidence = retained.get()
+          evidence.accepted = script.source == srcLlm
+          if evidence.accepted: engine.phaseSelected[seat] = some(evidence.attemptId)
+          else: evidence.rejectionReason = some("proposal was repaired or lacks native authority")
+          retained = some(evidence)
         script.latencyMs = latency
         engine.scripts[seat] = script
         engine.haveScript[seat] = true
+        engine.phaseInstalled[seat] = true
       except CatchableError as error:
         result.add(fallbackRecord(turnIndex, seat, attempt + 1, cause,
           error.msg))
@@ -435,6 +480,7 @@ proc turn*(
         echo "pistonball llm: seat ", seat, " attempt ", attempt + 1,
           " failed, falling back if it fails again: ", error.msg
         stillOpen.add(seat)
+      if retained.isSome: engine.phaseAttempts[seat].add(retained.get())
     open = stillOpen
     inc attempt
     var retryable: seq[int]
@@ -448,7 +494,7 @@ proc turn*(
   # --- anything still open plays wavebot for this turn ---------------------
   open.add(failFast)
   for seat in open:
-    engine.installScripted(sim, seat, blWavebot, srcFallback)
+    engine.installScripted(sim, seat, blWavebot, srcFallback, turnIndex)
     let cause =
       if lastCause[seat].len > 0: lastCause[seat]
       elif engine.llmOff: "budget_guard"

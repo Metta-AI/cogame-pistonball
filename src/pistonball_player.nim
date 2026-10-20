@@ -1,169 +1,234 @@
-## The pistonball player container registers and answers private decision views.
-##
-##   PLAYER_PROMPT        a strategy in plain English -> this seat is an LLM seat
-##   PLAYER_SCRIPTED      wavebot | metronome         -> this seat is scripted
-##   PLAYER_POLICY_LABEL  a free label for the replay's `register` record
-##
-## A seat that sets neither is `wavebot`. To field a prompt policy, reuse this
-## image and set PLAYER_PROMPT:
-##
-##   coworld upload-policy coworld-pistonball:latest --name my-pistonball \
-##     --run /bin/pistonball-player --secret-env PLAYER_PROMPT="<your strategy>"
+## Ordinary container player owns native inference and joins before STOP acknowledgement.
+import std/[atomics, json, locks, math, monotimes, options, os, strutils, times]
+import bitworld/[decision_trajectory, native_http, native_stop, native_websocket,
+  spriteprotocol]
+import pistonball/[llm, scripts, sim_config, sim_types]
 
-import
-  std/[json, options, os, strutils],
-  bitworld/spriteprotocol,
-  curly,
-  whisky,
-  pistonball/[llm, scripts, sim_config]
+type PlayerCall = object
+  socket: ptr NativeWebSocket
+  decisionId, attemptId, observation, systemPrompt, operatorPrompt, policy: string
+  deadline: MonoTime
+  slot: int
+  retry: bool
 
-const
-  ConnectAttempts = 240      ## 240 x 500 ms = 2 minutes of dialling.
-  ConnectRetryMs = 500
-  RegistrationResends = 10   ## re-sends after the first, ~1 s apart.
-  ResendEveryFrames = 24     ## ~1 s of frames at 24 Hz.
-  ReconnectAttempts = 6      ## 6 x 500 ms of re-dialling after a live socket
-                             ## dies, before accepting the game is gone.
+var
+  worker: Thread[void]
+  jobs: Channel[PlayerCall]
+  busy, cancelPending: Atomic[bool]
+  evidenceLock: Lock
+  activeControl: ptr NativeRequestControl
+  workerEvidence: string
 
-proc registrationBlob(kind, scripted, policy: string): string =
-  ## The one registration message. `scripted` is JSON null when the seat is an
-  ## LLM seat, so the server can tell "no baseline named" from "wavebot named
-  ## explicitly".
-  var node = %*{
-    "type": "register",
-    "kind": kind,
-    "policy": policy
-  }
-  if scripted.len > 0:
-    node["scripted"] = %scripted
+initLock(evidenceLock)
+
+proc cancelDecision() =
+  cancelPending.store(true)
+  withLock evidenceLock:
+    if activeControl != nil: activeControl[].cancelNativeRequest()
+
+proc retainEvidence(call: PlayerCall, attempt: DecisionAttempt) {.gcsafe.} =
+  let record = %*{"decision_id": call.decisionId,
+    "training_attempt": attempt.attemptEvidenceJson()}
+  {.gcsafe.}:
+    withLock evidenceLock:
+      var records = if workerEvidence.len > 0: parseJson(workerEvidence) else: newJArray()
+      var replaced = false
+      for index in 0 ..< records.len:
+        if records[index]["training_attempt"]["attempt_id"] == %attempt.attemptId:
+          records.elems[index] = record
+          replaced = true
+          break
+      if not replaced: records.add(record)
+      workerEvidence = $records
+
+proc runDecision(call: PlayerCall, client: LlmClient) {.gcsafe.} =
+  var control: NativeRequestControl
+  {.gcsafe.}:
+    withLock evidenceLock:
+      activeControl = control.addr
+      if cancelPending.load(): control.cancelNativeRequest()
+  defer:
+    {.gcsafe.}:
+      withLock evidenceLock: activeControl = nil
+    busy.store(false)
+  var reply = %*{"type": "action", "decision_id": call.decisionId,
+    "attempt_id": call.attemptId, "source": "fallback",
+    "training_attempt": newJNull()}
+  if client.disabled:
+    reply["cause"] = %"no_endpoint"
   else:
-    node["scripted"] = newJNull()
-  blobFromSpriteChat($node)
+    let started = proc(attempt: DecisionAttempt) {.gcsafe.} =
+      call.retainEvidence(attempt)
+      let sent = call.socket[].sendNativeText($ %*{
+        "type": "attempt_started", "decision_id": call.decisionId,
+        "attempt_id": call.attemptId, "training_attempt": attempt.attemptEvidenceJson()}, call.deadline)
+      if sent.kind != wsReady:
+        raise newException(LlmError, "private attempt start was not delivered")
+    var user = userMessage(call.operatorPrompt, call.observation)
+    if call.retry:
+      user.add("\n\nYour previous reply was unusable. Return only JSON.")
+    client.throttled = false
+    try:
+      let text = client.call(call.systemPrompt, user, call.deadline, call.slot,
+        call.attemptId, call.policy, control, started)
+      reply["action"] = extractJsonObject(text)
+      reply["source"] = %"llm"
+    except ScriptError:
+      reply["cause"] = %"parse_error"
+      client.lastAttempt.rejectionReason = some("model response did not contain a JSON proposal")
+    except CatchableError:
+      reply["cause"] = %(if client.throttled: "throttled" else: "transport_error")
+      client.lastAttempt.rejectionReason = some("native completion rejected")
+    reply["training_attempt"] = client.lastAttempt.attemptEvidenceJson()
+    call.retainEvidence(client.lastAttempt)
+  if interruptionRequested() or control.nativeRequestCanceled(): return
+  discard call.socket[].sendNativeText($reply, call.deadline)
 
-proc readyBlob(): string =
-  ## The Sprite v1 player-ready packet (0x85). Legitimate here in a way it is
-  ## not for an ordinary player client: this seat sends NO inputs at all (the
-  ## server computes every command byte), so the dead-reckoning hazard the
-  ## protocol warns about cannot arise, and a `fastMode` server can advance
-  ## the tick as soon as every seat has acknowledged the frame.
-  result = newString(1)
-  result[0] = char(SpriteClientReady)
+proc runWorker() {.gcsafe.} =
+  let client = newLlmClient(defaultGameConfig())
+  while not interruptionRequested():
+    let received = jobs.tryRecv()
+    if received.dataAvailable:
+      runDecision(received.msg, client)
+    else:
+      sleep(5)
+
+proc stopAndAcknowledge(socket: NativeWebSocket, decisionId, stopId: JsonNode,
+    cleanupDeadline: MonoTime): bool =
+  requestNativeStop()
+  cancelDecision()
+  joinThread(worker)
+  var attempts = newJArray()
+  withLock evidenceLock:
+    if workerEvidence.len > 0: attempts = parseJson(workerEvidence)
+  let sent = socket.sendCleanupText($ %*{"type": "stopped",
+    "decision_id": decisionId, "stop_id": stopId,
+    "worker_status": "joined", "attempts": attempts}, cleanupDeadline)
+  if sent.kind != wsReady: return false
+  while getMonoTime() < cleanupDeadline:
+    let received = socket.receiveCleanupText(cleanupDeadline)
+    if received.kind != wsMessage: return false
+    let frame = parseJson(received.data)
+    if frame["type"].getStr() == "evidence_received" and
+        frame["decision_id"] == decisionId and frame["stop_id"] == stopId:
+      return true
+  false
 
 when isMainModule:
-  let url = getEnv("COWORLD_PLAYER_WS_URL", getEnv("COGAMES_ENGINE_WS_URL"))
-  if url.len == 0:
-    quit("COWORLD_PLAYER_WS_URL is not set", 1)
-  let
-    prompt = getEnv("PLAYER_PROMPT").strip()
-    scripted = getEnv("PLAYER_SCRIPTED").strip()
-    kind = if prompt.len > 0: "prompt"
-      else: "scripted"
-    label = block:
-      let explicit = getEnv("PLAYER_POLICY_LABEL").strip()
-      if explicit.len > 0: explicit
-      elif kind == "prompt": "prompt"
-      elif scripted.len > 0: scripted
-      else: "wavebot"
-  echo "pistonball player: kind=",
-    kind,
-    " baseline=", (if scripted.len > 0: scripted else: "wavebot"),
-    " label=", label
-
-  proc dial(attempts: int): WebSocket =
-    ## Bounded dialling. The game bakes its board sprites BEFORE it opens the
-    ## listener, and the episode runner starts the players at the same instant
-    ## as the game — so the first dial always lands on a closed port.
-    for attempt in 0 ..< attempts:
-      try:
-        return newWebSocket(url)
-      except CatchableError as error:
-        if attempt == 0:
-          echo "pistonball player: game not listening yet (", error.msg,
-            "); retrying"
-        sleep(ConnectRetryMs)
-    nil
-
-  var socket = dial(ConnectAttempts)
+  installNativeStopHandlers()
+  let url = getEnv("COWORLD_PLAYER_WS_URL")
+  if url.len == 0: quit("COWORLD_PLAYER_WS_URL is not set", 1)
+  let prompt = getEnv("PLAYER_PROMPT").truncateRunes(MaxPromptRunes)
+  let scripted = getEnv("PLAYER_SCRIPTED").strip()
+  let kind = if prompt.strip().len > 0: "prompt" else: "scripted"
+  let baseline = if scripted.len > 0: scripted else: "wavebot"
+  let policy = getEnv("PLAYER_POLICY_LABEL", if kind == "prompt": "prompt" else: baseline)
+    .truncateRunes(MaxPolicyLabelRunes)
+  let timeout = getEnv("COWORLD_TIMEOUT_SECONDS", "1200").parseFloat()
+  if timeout <= 0 or classify(timeout) in {fcNan, fcInf, fcNegInf}:
+    raise newException(ValueError, "player timeout must be finite and positive")
+  let started = getMonoTime()
+  let deadline = started + initDuration(nanoseconds = int64(timeout * 1_000_000_000))
+  let connectDeadline = min(deadline, started + initDuration(seconds = 120))
+  var socket: NativeWebSocket
+  while getMonoTime() < connectDeadline and not interruptionRequested():
+    let connection = connectNativeWebSocket(url,
+      min(connectDeadline, getMonoTime() + initDuration(milliseconds = 500)), 16 * 1024 * 1024)
+    case connection.kind
+    of wsReady:
+      socket = connection.socket
+      break
+    of wsInterrupted: quit(0)
+    of wsMessage, wsClosed:
+      raise newException(ValueError, "invalid player connection state")
+    of wsDeadline, wsFailure: discard
+    sleep(5)
   if socket == nil:
-    quit("pistonball player: game never accepted a connection", 1)
-  echo "pistonball player: connected"
-  let client = if kind == "prompt": newLlmClient(defaultGameConfig())
-    else: nil
-
-  # Each session is wrapped: whisky's receiveMessage RAISES on a close frame
-  # or a truncated read (only a timeout returns none), and mummy's send only
-  # QUEUES — so the game's own quit(0) can outrun the flushed frame. A naive
-  # player exits 1 on that race and fails certification intermittently.
-  # Exiting 0 on a dead socket is the fix.
-  #
-  # REGISTRATION IS RE-SENT, NOT SENT ONCE. Joins are slot-sequential, so a
-  # seat whose slot is not the next open one is not admitted until the lower
-  # slots have joined — and the lobby sends frames to a socket before it is
-  # admitted, so the first registration AND a single re-send keyed on the
-  # first received frame can both land while the seat has no index yet. The
-  # server HOLDS an unappliable registration, and this end keeps re-sending it
-  # for the first ~10 s of frames, which covers the lobby whichever seat
-  # connects first. Registering twice is harmless: the server just re-reads
-  # the same fields.
-  var reconnects = 0
-  while true:
-    var sessionFrames = 0
+    if interruptionRequested(): quit(0)
+    raise newException(ValueError, "player connection deadline expired")
+  var decisionId = newJNull()
+  var slot = -1
+  var cleanupBudgetMs = 0
+  var joined = false
+  var registered = false
+  jobs.open()
+  createThread(worker, runWorker)
+  try:
+    while getMonoTime() < deadline:
+      if interruptionRequested(): break
+      let received = socket.receiveNativeMessage(min(deadline,
+        getMonoTime() + initDuration(milliseconds = 50)))
+      case received.kind
+      of wsDeadline, wsInterrupted: continue
+      of wsClosed: break
+      of wsMessage: discard
+      else: raise newException(ValueError, "player transport failed")
+      if received.messageKind.get() == wsmBinary:
+        let ready = sendNativeBinary(socket, $char(SpriteClientReady), deadline)
+        if ready.kind != wsReady: break
+        continue
+      let payload = parseJson(received.data)
+      case payload["type"].getStr()
+      of "welcome":
+        if registered: raise newException(ValueError, "duplicate player welcome")
+        slot = payload["slot"].getInt()
+        if slot < 0: raise newException(ValueError, "invalid player slot")
+        let registration = $ %*{"type": "register", "policy": policy,
+          "prompt": prompt, "kind": kind,
+          "scripted": (if kind == "scripted": %baseline else: newJNull())}
+        let sent = socket.sendNativeBinary(blobFromSpriteChat(registration), deadline)
+        if sent.kind != wsReady: raise newException(ValueError, "player registration failed")
+        registered = true
+      of "decision":
+        if not registered or kind != "prompt":
+          raise newException(ValueError, "decision was not issued to a prompt player")
+        let receivedAt = getMonoTime()
+        let issuedId = payload["decision_id"]
+        let attemptId = payload["attempt_id"]
+        if issuedId.kind != JString or issuedId.getStr().len == 0 or
+            attemptId.kind != JString or attemptId.getStr().len == 0:
+          raise newException(ValueError, "decision and attempt identities must be nonempty strings")
+        let budgetMs = payload["transport"]["budget_ms"].getInt()
+        cleanupBudgetMs = payload["transport"]["cleanup_budget_ms"].getInt()
+        if budgetMs <= 0 or cleanupBudgetMs < 0:
+          raise newException(ValueError, "invalid decision transport budget")
+        let decisionDeadline = min(deadline, receivedAt + initDuration(milliseconds = budgetMs))
+        if busy.load(): cancelDecision()
+        while busy.load() and getMonoTime() < decisionDeadline and not interruptionRequested():
+          sleep(5)
+        if interruptionRequested(): break
+        if busy.load(): raise newException(ValueError, "previous request owner did not join")
+        decisionId = issuedId
+        cancelPending.store(false)
+        busy.store(true)
+        jobs.send(PlayerCall(socket: socket.addr, decisionId: issuedId.getStr(),
+          attemptId: attemptId.getStr(), observation: $payload["view"],
+          systemPrompt: payload["system"].getStr(), operatorPrompt: prompt,
+          policy: policy, retry: payload["retry"].getBool(), slot: slot,
+          deadline: decisionDeadline))
+      of "stop":
+        let stopId = payload["stop_id"]
+        if stopId.kind != JString or stopId.getStr().len == 0 or
+            payload["decision_id"] != decisionId:
+          raise newException(ValueError, "stop does not identify the latest issued operation")
+        let stopBudget = payload["cleanup_budget_ms"].getInt()
+        if stopBudget < 0: raise newException(ValueError, "invalid cleanup budget")
+        joined = true
+        if not stopAndAcknowledge(socket, decisionId, stopId,
+            min(deadline, getMonoTime() + initDuration(milliseconds = stopBudget))):
+          raise newException(ValueError, "private stop evidence was not confirmed")
+        break
+      of "final": break
+      of "turn", "state", "evidence_received": discard
+      else: raise newException(ValueError, "unknown player packet")
+  finally:
+    var confirmed = true
     try:
-      socket.send(registrationBlob(kind, scripted, label), BinaryMessage)
-      var resends = 0
-      while true:
-        let received = socket.receiveMessage()
-        if received.isNone:
-          continue                    ## a read timeout, not a closed socket
-        if received.get().kind == TextMessage:
-          let decision = parseJson(received.get().data)
-          if decision{"type"}.getStr() == "decision":
-            var reply = %*{"type": "action", "id": decision["id"]}
-            let timeoutSeconds = decision["timeout_seconds"].getInt()
-            if kind == "prompt" and client.disabled:
-              reply["cause"] = %"no_credentials"
-              reply["error"] = %"no_credentials"
-            else:
-              try:
-                client.throttled = false
-                var user = userMessage(prompt, $decision["view"])
-                if decision["retry"].getBool():
-                  user.add("\n\nYour previous reply was unusable. Return only JSON.")
-                let request = client.requestFor(
-                  decision["system"].getStr(), user, -1)
-                let response = client.curl.post(request.url,
-                  request.headers, request.body, timeoutSeconds)
-                reply["action"] = extractJsonObject(
-                  client.textOf(response, "", request.url))
-              except ScriptError as error:
-                reply["cause"] = %"parse_error"
-                reply["error"] = %error.msg
-              except CatchableError as error:
-                reply["cause"] = %(if kind == "prompt" and client.throttled:
-                    "throttled" else: "transport_error")
-                reply["error"] = %error.msg
-            socket.send($reply, TextMessage)
-          continue
-        inc sessionFrames
-        if resends < RegistrationResends and
-            sessionFrames mod ResendEveryFrames == 1:
-          inc resends
-          socket.send(registrationBlob(kind, scripted, label), BinaryMessage)
-        socket.send(readyBlob(), BinaryMessage)
-    except CatchableError as error:
-      echo "pistonball player: socket closed (", error.msg, ")"
-    # NEVER exit while the game is still serving: a seat that drops keeps its
-    # piston for the whole episode and revives on reconnect. Bounded on both
-    # counts — a session that never received a frame means the game is winding
-    # down, and the re-dial is capped — so this can never outlive the game or
-    # spin.
-    if sessionFrames == 0 or reconnects >= ReconnectAttempts:
-      break
-    inc reconnects
-    echo "pistonball player: re-dialling the seat (attempt ", reconnects, ")"
-    socket = dial(ReconnectAttempts)
-    if socket == nil:
-      echo "pistonball player: game is no longer listening, exiting cleanly"
-      break
-    echo "pistonball player: reconnected, re-registering"
-  quit(0)
+      if not joined:
+        confirmed = stopAndAcknowledge(socket, decisionId, newJNull(),
+          min(deadline, getMonoTime() + initDuration(milliseconds = cleanupBudgetMs)))
+    finally:
+      jobs.close()
+      closeNativeWebSocket(socket)
+    if decisionId.kind == JString and not confirmed:
+      raise newException(ValueError, "private interrupted evidence was not confirmed")

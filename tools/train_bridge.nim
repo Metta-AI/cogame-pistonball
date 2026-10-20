@@ -193,8 +193,8 @@ when isMainModule:
         "values": views[seat].values(variant), "action_heads": heads()}
     of "teacher":
       doAssert game.phase != GameOver
-      let teacher = wavebotScript(game, game.pistonOfSeat(seat))
-      response = %*{"response": $(if textMode: teacher.scriptAction() else: action(teacher))}
+      let teacher = wavebotScript(views[seat])
+      response = %*{"response": $(if textMode: teacher.appliedScriptAction() else: action(teacher))}
     of "step":
       doAssert game.phase != GameOver and request["decision_id"].getInt() == id
       let candidate = extractJsonObject(request["response"].getStr())
@@ -205,7 +205,7 @@ when isMainModule:
         if textMode: candidate else: candidate.hostedScript(),
         engine.scripts[seat], engine.haveScript[seat])
       if not textMode: doAssert action(parsed) == candidate
-      let executed = if textMode: parsed.scriptAction() else: action(parsed)
+      let executed = if textMode: parsed.appliedScriptAction() else: action(parsed)
       engine.scripts[seat] = parsed
       engine.haveScript[seat] = true
       inc id

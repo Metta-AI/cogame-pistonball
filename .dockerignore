@@ -5,3 +5,12 @@ replay-viewer/dist
 nimcache
 nim.cfg
 tmp
+
+# Private training evidence never enters public game or player images.
+*.jsonl
+teacher-*/
+corpus/
+training-data/
+*-proof*/
+__pycache__/
+*.pyc
