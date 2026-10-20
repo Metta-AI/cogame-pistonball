@@ -7,6 +7,7 @@
 ## recorded, so the wasm viewer re-derives the whole match from them without
 ## ever running either.
 
+import ./prompts
 import
   std/[algorithm, base64, json, locks, monotimes, options, os, sets, strutils, sysrand, tables, times],
   bitworld/client as bitworldClient,
@@ -62,7 +63,7 @@ type
   IssuedDecision = object
     socket: WebSocket
     seat, turn: int
-    view, operatorPrompt, policy: string
+    view, operatorPrompt, policy, system: string
     retry: bool
     issuedAt, deadline: MonoTime
 
@@ -387,7 +388,7 @@ proc retainNativeEvidence(socket: WebSocket, id: string, evidence: JsonNode,
       validateNativeProgress(appState.nativeStarts[id], facts)
     elif first:
       validateNativeStart(result)
-      validateNativeRequest(result, issue.view, issue.operatorPrompt, issue.policy, issue.retry)
+      validateNativeRequest(result, issue.view, issue.operatorPrompt, issue.policy, issue.system, issue.retry)
       appState.nativeStarts[id] = facts
     else:
       raise newException(ValueError, "native completion has no recorded request start")
@@ -602,7 +603,7 @@ proc publishGlobalFrames(sim: var SimServer, replayPlayer: var ReplayPlayer,
 
 proc playerBatch(
   seatSockets: seq[WebSocket], seatConnected: seq[bool],
-  publishWaiting: proc() {.closure, gcsafe.}
+  publishWaiting: proc() {.closure, gcsafe.}, system: string
 ): BatchFn =
   result = proc(calls: seq[BatchCall], deadline: MonoTime): seq[BatchReply]
       {.closure, gcsafe.} =
@@ -618,7 +619,7 @@ proc playerBatch(
             let socket = seatSockets[call.seat]
             let id = $requestNumber & "-seat-" & $call.seat
             appState.issuedDecisions[id] = IssuedDecision(socket: socket, seat: call.seat, turn: call.turn,
-              view: call.view, retry: call.retry, issuedAt: issuedAt, deadline: deadline,
+              view: call.view, system: system, retry: call.retry, issuedAt: issuedAt, deadline: deadline,
               operatorPrompt: appState.operatorPrompts[socket], policy: appState.policyLabels[socket])
             appState.latestDecisions[socket] = id
     for position, call in calls:
@@ -632,7 +633,7 @@ proc playerBatch(
       let frame = %*{
         "type": "decision", "decision_id": requestId,
         "attempt_id": requestId & "-native", "seat": call.seat,
-        "view": parseJson(call.view), "system": SystemPrompt,
+        "view": parseJson(call.view), "system": system,
         "retry": call.retry, "transport": {"budget_ms":
           max(0, int((deadline - getMonoTime()).inMilliseconds)), "cleanup_budget_ms": 5000}}
       if not sendPlayerFrame(seatSockets[call.seat], $frame):
@@ -725,6 +726,8 @@ proc runGameOwnerLoop(
   episodeDeadline: MonoTime,
   runtimeInputs: JsonNode
 ) =
+  let selection = promptSelection(
+    if runtimeConfig.config.len == 0: newJObject() else: parseJson(runtimeConfig.config))
   var initializedOwner = false
   defer:
     if not initializedOwner:
@@ -1060,7 +1063,7 @@ proc runGameOwnerLoop(
           proc publishWaiting() {.gcsafe.} =
             {.cast(gcsafe).}:
               publishGlobalFrames(sim, replayPlayer, false, liveSpeedIndex, newJArray())
-          engine.batch = playerBatch(seatSockets, seatConnected, publishWaiting)
+          engine.batch = playerBatch(seatSockets, seatConnected, publishWaiting, systemPrompt(selection, config))
           let elapsedSeconds = (getMonoTime() - episodeStart).inSeconds.int
           let records = engine.turn(sim, turnIndex, elapsedSeconds)
           if trajectory.isSome:

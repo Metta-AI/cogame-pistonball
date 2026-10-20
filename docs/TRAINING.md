@@ -1,4 +1,4 @@
-# Pistonball training
+# Pistonball prompt diversity and training
 
 The canonical exporter produces complete private trajectory events. It does
 not create train/validation datasets or authorize source content.
@@ -9,7 +9,16 @@ nim c -d:release --path:src -o:/tmp/pistonball-export tools/export_posttrain.nim
 /tmp/pistonball-export /tmp/pistonball-sprint 20 1 sprint source-<commit>
 ```
 
-All five exporter arguments are required. Each episode uses the declared
+The first five exporter arguments are required. Append `PROMPT_VARIANT PROMPT_SEED`
+to select wording. Five training wordings and two evaluation-only wordings keep
+rules, privacy, and action syntax fixed. Mixed wording cycles by scenario within
+each split. Held-out wording is rejected by the exporter and by training resets.
+Episode IDs distinguish wording; seed families group matched scenarios.
+
+The bridge accepts `text` for JSON scripts; numeric mode keeps eight action heads
+and 66 features. Both modes record rendered message hashes.
+
+ Each episode uses the declared
 variant configuration and the new `wavebot-private-view-v1` teacher. The
 teacher consumes the same rounded private `windowView` as the live scripted
 baseline. Exact subpixel simulator state is not a teacher input. The ordinary

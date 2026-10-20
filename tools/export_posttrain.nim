@@ -1,9 +1,9 @@
 ## Export complete Pistonball episodes as canonical private trajectories.
-## Usage: export_posttrain OUTPUT EPISODES FIRST_SEED VARIANT GAME_VERSION
+## Usage: export_posttrain OUTPUT EPISODES FIRST_SEED VARIANT GAME_VERSION [PROMPT_VARIANT PROMPT_SEED]
 
 import std/[base64, json, options, os, osproc, strutils]
 import bitworld/decision_trajectory
-import pistonball/[sim, scripts, baselines, decide, llm, roster, training_capture]
+import pistonball/[sim, scripts, baselines, decide, llm, roster, training_capture, prompts]
 
 proc flushMacros(trajectory: DecisionTrajectory, macros: var seq[StagedMacro],
     endTick: int, terminal: bool) =
@@ -15,14 +15,17 @@ const OperatorPrompt = "Coordinate the bank using only your own piston's window.
 
 when isMainModule:
   let args = commandLineParams()
-  if args.len != 5:
-    quit("usage: export_posttrain OUTPUT EPISODES FIRST_SEED VARIANT GAME_VERSION", 1)
+  if args.len notin [5, 7]:
+    quit("usage: export_posttrain OUTPUT EPISODES FIRST_SEED VARIANT GAME_VERSION [PROMPT_VARIANT PROMPT_SEED]", 1)
   let output = args[0]
   let episodes = parseInt(args[1])
   let firstSeed = parseInt(args[2])
   let variant = args[3]
   let gameVersion = args[4]
   doAssert gameVersion.len > 0
+  let configured = promptSelection(if args.len == 7:
+    %*{"promptVariant": args[5], "promptSeed": parseInt(args[6])} else: newJObject())
+  doAssert configured.selectedVariant notin {pvHeldoutBriefing, pvHeldoutReference}, "held-out wording is evaluation only"
   if episodes < 10 or firstSeed < 1:
     quit("at least ten episodes and a positive first seed are required", 1)
   if variant notin ["default", "sprint"]:
@@ -40,7 +43,13 @@ when isMainModule:
   doAssert not variantConfig.isNil
   var trajectoryRows: seq[string]
   var runs = newJArray()
+  var wordingCounts: array[2, int]
   for seed in firstSeed ..< firstSeed + episodes:
+    var selection = configured
+    let split = ord(seed mod 5 == 0)
+    if selection.variant == pvMixed:
+      selection.seed += wordingCounts[split]
+      inc wordingCounts[split]
     var config = defaultGameConfig()
     config.update($variantConfig)
     config.seed = seed
@@ -51,7 +60,8 @@ when isMainModule:
     while sim.phase != Playing:
       sim.step(idle)
     let startTick = sim.tickCount
-    let trajectory = newDecisionTrajectory("pistonball-" & variant & "-" & $seed,
+    let trajectory = newDecisionTrajectory("pistonball-" & variant & "-" & $seed & "-" &
+      $selection.variant & "-" & $selection.selectedVariant & "-" & $selection.seed,
       "pistonball-" & $seed, "pistonball", gameVersion, sourceRevision)
     var engine = initDecisionEngine(sim)
     var pending: seq[StagedMacro]
@@ -71,8 +81,11 @@ when isMainModule:
           (sim.penaltyMilli - sim.turnStartPenaltyMilli)
         sim.turnStartProgressMilli = sim.progressMilli
         sim.turnStartPenaltyMilli = sim.penaltyMilli
+        var views: array[PistonCount, string]
         for seat in 0 ..< PistonCount:
-          let view = engine.windowView(sim, seat, turn)
+          views[seat] = $engine.windowView(sim, seat, turn)
+        for seat in 0 ..< PistonCount:
+          let view = parseJson(views[seat])
           let teacher = wavebotScript(view)
           let completion = appliedScriptAction(teacher)
           let parsed = parsePistonScript(completion, engine.scripts[seat],
@@ -83,15 +96,17 @@ when isMainModule:
           var attempt = newDecisionAttempt(decisionId & "-teacher",
             PrivateViewTeacher, aoTeacher)
           attempt.prompt = %*[
-            {"role": "system", "content": SystemPrompt},
+            {"role": "system", "content": systemPrompt(selection, config)},
             {"role": "user", "content": userMessage(OperatorPrompt, $view)}]
           attempt.response = %($completion)
           attempt.parsedAction = completion
           attempt.accepted = true
           engine.scripts[seat] = parsed
           engine.haveScript[seat] = true
+          let observation = copy(view)
+          observation["prompt_template"] = selection.promptMetadata(systemPrompt(selection, config), userMessage(OperatorPrompt, $view))
           pending.add(StagedMacro(decisionId: decisionId, seat: seat, turn: turn,
-            startTick: sim.tickCount, observation: view, action: completion,
+            startTick: sim.tickCount, observation: observation, action: completion,
             attempts: @[attempt], selected: some(attempt.attemptId), status: asAccepted))
           inc decisions
         engine.closeTurn()

@@ -42,13 +42,13 @@ proc validateNativeProgress*(before, evidence: JsonNode) =
       raise newException(ValueError, "received native identity is immutable")
 
 proc validateNativeRequest*(attempt: DecisionAttempt, view, operatorPrompt,
-    policy: string, retry: bool) =
+    policy, system: string, retry: bool) =
   var user = userMessage(operatorPrompt, view)
   if retry: user.add("\n\nYour previous reply was unusable. Return only JSON.")
-  let prompt = %*[{"role": "system", "content": SystemPrompt},
+  let prompt = %*[{"role": "system", "content": system},
     {"role": "user", "content": user}]
   if attempt.prompt != prompt or attempt.policy != policy or
-      attempt.request["system"] != %SystemPrompt or
+      attempt.request["system"] != %system or
       attempt.request["messages"] != %*[{"role": "user", "content": user}] or
       attempt.model.isNone or attempt.request["model"] != %attempt.model.get():
     raise newException(ValueError, "native request differs from the issued private decision")

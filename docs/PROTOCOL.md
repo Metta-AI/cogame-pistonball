@@ -17,7 +17,7 @@ seating the player. Operator guidance and full model evidence stay in private
 trajectories; public replay registrations contain neither.
 
 A text `decision` carries string `decision_id` and `attempt_id`, `seat`, the
-private `view`, system rules, `retry`, and
+private `view`, episode-stable selected system rules, `retry`, and
 `transport={budget_ms,cleanup_budget_ms}`. Transport budgets are separate from
 the model observation. The ordinary turn budget is 20,000 ms: the first call
 uses at most 12,000 ms and one retry at most 6,000 ms, both clipped to that

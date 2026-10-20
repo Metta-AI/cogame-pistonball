@@ -69,6 +69,8 @@ async def main() -> None:
     config = destination / "config.json"
     config.write_text(json.dumps({"seed": 1, "num_agents": 20, "minPlayers": 20,
                                  "maxTicks": 60, "turnTicks": 30, "minBatchSpacingMs": 0,
+                                 "promptVariant": "mixed" if scenario == "complete" else "canonical",
+                                 "promptSeed": 3,
                                  "gameOverTicks": 2, "fastMode": True,
                                  "players": [{"name": f"PST-{seat + 1:02d}", "token": f"fixture-{seat}"}
                                              for seat in range(20)]}))
