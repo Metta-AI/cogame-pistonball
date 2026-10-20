@@ -26,7 +26,7 @@ export_posttrain PRIVATE_OUTPUT 10 1 sprint mixed 0
 
 Original train/validation JSONL and manifests are retained. Every fifth scenario is
 validation; wording cycles separately inside each split. All variants share scenario
-families named `pistonball-SEED`. Episode IDs include selected wording and prompt seed
+families named `pistonball-SEED`. Episode IDs include requested selection, resolved wording, and prompt seed
 so matched exports cannot collide. Every row comes from the native parser and controller,
 with simultaneous observations frozen before scripts are installed. Natural early
 delivery remains valid. Export from clean committed source and review content before

@@ -87,7 +87,7 @@ when isMainModule:
           doAssert parsed.blind == teacher.blind
           rows.add($(%*{
             "episode_id": "pistonball-" & variant & "-" & $seed & "-" &
-              $selection.selectedVariant & "-" & $selection.seed,
+              $selection.variant & "-" & $selection.selectedVariant & "-" & $selection.seed,
             "seed": "pistonball-" & $seed,
             "decision_id": turn * PistonCount + seat,
             "prompt_template": selection.promptMetadata(systemPrompt(selection, config), userMessage(OperatorPrompt, view)),
