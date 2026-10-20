@@ -7,6 +7,7 @@
 ## recorded, so the wasm viewer re-derives the whole match from them without
 ## ever running either.
 
+import ./prompts
 import
   std/[algorithm, json, locks, monotimes, os, strutils, tables, times],
   bitworld/client as bitworldClient,
@@ -306,7 +307,7 @@ proc parseRegistration*(
   result.policy = node{"policy"}.getStr()
 
 proc playerBatch(
-  seatSockets: seq[WebSocket], seatConnected: seq[bool]
+  seatSockets: seq[WebSocket], seatConnected: seq[bool], system: string
 ): BatchFn =
   result = proc(calls: seq[BatchCall], timeoutSeconds: int): seq[BatchReply]
       {.closure, gcsafe.} =
@@ -328,7 +329,7 @@ proc playerBatch(
       try:
         seatSockets[call.seat].send($( %*{
           "type": "decision", "id": requestId, "seat": call.seat,
-          "view": parseJson(call.view), "system": SystemPrompt,
+          "view": parseJson(call.view), "system": system,
           "retry": call.retry, "timeout_seconds": timeoutSeconds
         }), TextMessage)
       except CatchableError as error:
@@ -422,6 +423,8 @@ proc runServerLoop*(
   runtimeConfig = RuntimeConfig()
 ) =
   initAppState()
+  let selection = promptSelection(
+    if runtimeConfig.config.len == 0: newJObject() else: parseJson(runtimeConfig.config))
   if saveReplayPath.len > 0 and loadReplayPath.len > 0:
     raise newException(ReplayError, "Cannot save and load a replay together")
   var replayLoaded = loadReplayPath.len > 0
@@ -680,7 +683,7 @@ proc runServerLoop*(
             if seat >= 0 and seat < engine.seats.len:
               seatSockets[seat] = sockets[i]
               seatConnected[seat] = true
-          engine.batch = playerBatch(seatSockets, seatConnected)
+          engine.batch = playerBatch(seatSockets, seatConnected, systemPrompt(selection, config))
           let elapsedSeconds = (getMonoTime() - episodeStart).inSeconds.int
           let records = engine.turn(sim, turnIndex, elapsedSeconds)
           for record in records:

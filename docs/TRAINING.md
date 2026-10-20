@@ -1,37 +1,40 @@
-# Metta post-training data
+# Pistonball prompt diversity and training
 
-The native simulator and published `wavebot` policy can export supervised
-examples for both certified variants:
+The `pistonball-rules-v3` bank offers five complete training presentations and two
+evaluation-only presentations. Wording and section order vary the bank geometry,
+local visibility, downhill rolling, program timing, and shared reward explanations.
+Action syntax, strategy hints, and privacy rules stay fixed. Alternate presentations
+use independent phrasing. Every wording, including canonical, explains net progress
+credit and elapsed-time deductions; delivery stops the run without a separate bonus.
+Sprint states an 8.3-second program cadence and -12 idle score, derived from its
+existing configuration; gameplay budgets do not change.
 
-```sh
-nimby sync nimby.lock
-nim r -d:release --path:src tools/export_posttrain.nim \
-  /tmp/pistonball-default 10 1 default
-nim r -d:release --path:src tools/export_posttrain.nim \
-  /tmp/pistonball-sprint 10 1 sprint
-```
+Configure `promptVariant` and `promptSeed`. Mixed selection requires an explicit
+nonnegative seed, resolves modulo five, and stays fixed throughout the game.
+The server sends the complete rendered rules to the ordinary player using the
+existing decision protocol. Simulation randomness and the decision engine are unchanged.
 
-Each run reads its exact manifest variant config and plays complete seeded,
-twenty-seat games. The exporter records the hosted system prompt, each seat's
-one-metre window, and a `wavebot` script that round-trips through the game's
-reply parser. Splits are by game seed. The manifest records source revision,
-variant, scores, wins, and row counts. Existing output directories are never
-overwritten.
-
-Train either output with Metta post-training:
+The bridge accepts `text` for native JSON scripts; numeric mode retains eight action
+heads and 66 features. Training resets reject held-out wording. Bridge and export
+metadata retain selection plus exact system/user message hashes.
 
 ```sh
-nix develop -c uv run --package metta-posttrain --extra train \
-  python -m metta_posttrain.train --dataset /tmp/pistonball-default \
-  --output /tmp/pistonball-adapter --model Qwen/Qwen3-0.6B \
-  --max-steps 100 --max-length 4096
+python3 tools/test_prompt_games.py BRIDGE
+export_posttrain PRIVATE_OUTPUT 10 1 default mixed 0
+export_posttrain PRIVATE_OUTPUT 10 1 sprint mixed 0
 ```
 
-The local 10-game default and sprint exports each contained 160 training and
-40 validation examples, with 10/10 deliveries. All 400 examples fit a
-4096-token model context. A one-step CPU optimizer smoke reduced held-out loss
-from 5.5833 to 5.5089 (default) and 5.5254 to 5.4587 (sprint). This distills
-the scripted teacher; it does not establish stronger league play.
+Original train/validation JSONL and manifests are retained. Every fifth scenario is
+validation; wording cycles separately inside each split. All variants share scenario
+families named `pistonball-SEED`. Episode IDs include requested selection, resolved wording, and prompt seed
+so matched exports cannot collide. Every row comes from the native parser and controller,
+with simultaneous observations frozen before scripts are installed. Natural early
+delivery remains valid. Export from clean committed source and review content before
+training. Held-out wording cannot enter source exports.
+
+Compare canonical and mixed training with fixed game seeds, seats, policies, decoder
+settings, and game budgets. Report scores, invalid replies, retries, and failures by
+wording. Scripted parity does not demonstrate resistance to training collapse.
 
 ## Numeric training
 

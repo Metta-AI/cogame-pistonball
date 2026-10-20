@@ -151,8 +151,9 @@ jobs:
 
       - name: Train bridge episodes
         run: |
-          nim c -d:release --hints:off --path:src -o:/tmp/pistonball-train-bridge tools/train_bridge.nim
+          nim c --parallelBuild:1 -d:release --hints:off --path:src -o:/tmp/pistonball-train-bridge tools/train_bridge.nim
           python3 tools/test_train_bridge.py /tmp/pistonball-train-bridge
+          python3 tools/test_prompt_games.py /tmp/pistonball-train-bridge
 
   # ---------------------------------------------------------------------
   # Packaging smoke: the production image builds, and one real episode runs

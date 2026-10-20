@@ -17,7 +17,9 @@ seat is admitted. Prompt text stays in the player container and is never
 written to the game, replay, or results. An unregistered seat plays wavebot.
 
 The game sends a text decision message with one seat's private `view`, the
-system rules, a request `id`, retry flag, and timeout. The player responds
+system rules, a request `id`, retry flag, and timeout. It also sends an
+`attempt_id` and `prompt_selection` (bank, selected variant, selection mode, seed).
+The selected wording remains fixed throughout the episode. The player responds
 with a text action message carrying the same `id` and the complete script in
 `action`, or a `cause` and `error` when inference fails. The game parses and
 repairs the script, records fallbacks, and compiles deterministic command bytes.

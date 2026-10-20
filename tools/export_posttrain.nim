@@ -1,19 +1,22 @@
 ## Export complete Pistonball games as Metta post-training examples.
-## Usage: nim r --path:src tools/export_posttrain.nim OUTPUT EPISODES [FIRST_SEED] [default|sprint]
+## Usage: nim r --path:src tools/export_posttrain.nim OUTPUT EPISODES [FIRST_SEED] [default|sprint] [PROMPT_VARIANT PROMPT_SEED]
 
 import std/[json, os, osproc, strutils]
-import pistonball/[sim, scripts, baselines, decide, llm]
+import pistonball/[sim, scripts, baselines, decide, llm, prompts]
 
 const OperatorPrompt = "Coordinate the bank using only your own piston's window."
 
 when isMainModule:
   let args = commandLineParams()
-  if args.len notin 2 .. 4:
-    quit("usage: export_posttrain OUTPUT EPISODES [FIRST_SEED] [default|sprint]", 1)
+  if args.len notin [2, 3, 4, 6]:
+    quit("usage: export_posttrain OUTPUT EPISODES [FIRST_SEED] [default|sprint] [PROMPT_VARIANT PROMPT_SEED]", 1)
   let output = args[0]
   let episodes = parseInt(args[1])
   let firstSeed = if args.len >= 3: parseInt(args[2]) else: 1
-  let variant = if args.len == 4: args[3] else: "default"
+  let variant = if args.len >= 4: args[3] else: "default"
+  let configured = promptSelection(if args.len == 6:
+    %*{"promptVariant": args[4], "promptSeed": parseInt(args[5])} else: newJObject())
+  doAssert configured.selectedVariant notin {pvHeldoutBriefing, pvHeldoutReference}, "held-out wording is evaluation only"
   if episodes < 10 or firstSeed < 1:
     quit("at least ten episodes and a positive first seed are required", 1)
   if variant notin ["default", "sprint"]:
@@ -32,7 +35,13 @@ when isMainModule:
     trainRows: seq[string]
     validationRows: seq[string]
     runs = newJArray()
+    wordingCounts: array[2, int]
   for seed in firstSeed ..< firstSeed + episodes:
+    var selection = configured
+    let split = ord(seed mod 5 == 0)
+    if selection.variant == pvMixed:
+      selection.seed += wordingCounts[split]
+      inc wordingCounts[split]
     var config = defaultGameConfig()
     config.update($variantConfig)
     config.seed = seed
@@ -56,9 +65,12 @@ when isMainModule:
           (sim.penaltyMilli - sim.turnStartPenaltyMilli)
         sim.turnStartProgressMilli = sim.progressMilli
         sim.turnStartPenaltyMilli = sim.penaltyMilli
+        var views: array[PistonCount, string]
+        for seat in 0 ..< PistonCount:
+          views[seat] = $engine.windowView(sim, seat, turn)
         for seat in 0 ..< PistonCount:
           let piston = sim.pistonOfSeat(seat)
-          let view = $engine.windowView(sim, seat, turn)
+          let view = views[seat]
           let teacher = wavebotScript(sim, piston)
           var completion = scriptJson(teacher)
           completion["note"] = %teacher.note
@@ -74,11 +86,13 @@ when isMainModule:
           doAssert parsed.speed255 == teacher.speed255
           doAssert parsed.blind == teacher.blind
           rows.add($(%*{
-            "episode_id": "pistonball-" & variant & "-" & $seed,
-            "seed": "pistonball-" & variant & "-" & $seed,
+            "episode_id": "pistonball-" & variant & "-" & $seed & "-" &
+              $selection.variant & "-" & $selection.selectedVariant & "-" & $selection.seed,
+            "seed": "pistonball-" & $seed,
             "decision_id": turn * PistonCount + seat,
+            "prompt_template": selection.promptMetadata(systemPrompt(selection, config), userMessage(OperatorPrompt, view)),
             "prompt": [
-              {"role": "system", "content": SystemPrompt},
+              {"role": "system", "content": systemPrompt(selection, config)},
               {"role": "user", "content": userMessage(OperatorPrompt, view)}
             ],
             "completion": [{"role": "assistant", "content": $completion}],
