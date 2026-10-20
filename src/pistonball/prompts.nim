@@ -17,7 +17,7 @@ type
     seed*: int
 
 const
-  PromptBankVersion* = "pistonball-rules-v2"
+  PromptBankVersion* = "pistonball-rules-v3"
 
 proc promptSelection*(node: JsonNode): PromptSelection =
   if node.kind != JObject:

@@ -1,11 +1,13 @@
 # Pistonball prompt diversity and training
 
-The `pistonball-rules-v2` bank offers five complete training presentations and two
+The `pistonball-rules-v3` bank offers five complete training presentations and two
 evaluation-only presentations. Wording and section order vary the bank geometry,
 local visibility, downhill rolling, program timing, and shared reward explanations.
-Action syntax, strategy hints, and privacy rules stay fixed. Default canonical bytes
-are unchanged. Sprint now correctly states an 8.3-second program cadence and -12
-idle score, derived from its existing configuration; gameplay budgets do not change.
+Action syntax, strategy hints, and privacy rules stay fixed. Alternate presentations
+use independent phrasing. Every wording, including canonical, explains net progress
+credit and elapsed-time deductions; delivery stops the run without a separate bonus.
+Sprint states an 8.3-second program cadence and -12 idle score, derived from its
+existing configuration; gameplay budgets do not change.
 
 Configure `promptVariant` and `promptSeed`. Mixed selection requires an explicit
 nonnegative seed, resolves modulo five, and stays fixed throughout the game.
@@ -24,7 +26,8 @@ export_posttrain PRIVATE_OUTPUT 10 1 sprint mixed 0
 
 Original train/validation JSONL and manifests are retained. Every fifth scenario is
 validation; wording cycles separately inside each split. All variants share scenario
-families named `pistonball-SEED`. Every row comes from the native parser and controller,
+families named `pistonball-SEED`. Episode IDs include selected wording and prompt seed
+so matched exports cannot collide. Every row comes from the native parser and controller,
 with simultaneous observations frozen before scripts are installed. Natural early
 delivery remains valid. Export from clean committed source and review content before
 training. Held-out wording cannot enter source exports.

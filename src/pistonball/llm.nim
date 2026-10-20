@@ -151,9 +151,10 @@ it has already rolled past you. Timing is the whole game.
 Every 9.4 seconds you set your piston's PROGRAM for the next 9.4 seconds. A
 deterministic controller runs it 24 times a second, watching your window for
 you: you choose WHEN to act and HOW FAR to move, it does the reacting.
-Everyone in the bank gets the SAME score: +100 for delivering the ball to the
-left wall, minus 0.24 points for every second the run takes. Doing nothing
-scores -18.
+Everyone in the bank gets the SAME score: net leftward progress from the drop
+point earns 100 points per 7.20 metres, floored at zero, minus 0.24 points per
+second elapsed. Moving right loses progress already earned. Delivery ends the
+run and its time penalty; it is not a separate bonus. Doing nothing scores -18.
 """
 
 const ReplyRules = """Reply with a single JSON object and NOTHING else. Your reply MUST begin with '{'.
@@ -201,15 +202,111 @@ proc systemPrompt*(selection: PromptSelection, config: GameConfig): string =
   let control = "Set your program every " & cadence & " seconds for the next " & cadence &
     " seconds. A deterministic controller watches your window and runs the program 24 " &
     "times each second. Choose when to react and how far to move; the controller executes those reactions."
-  let reward = "All twenty pistons receive the same score: +100 for delivery to the left wall, " &
-    "minus 0.24 points per second spent. Doing nothing for the full configured run scores -" & idleCost & "."
+  let reward = "All twenty pistons receive the same score. Net movement left from the drop " &
+    "point earns 100 points per 7.20 metres, with progress floored at zero; subtract " &
+    "0.24 points per elapsed second. Moving back right reduces earned progress. " &
+    "Delivery stops the run and time penalty without a separate bonus. Doing nothing " &
+    "for the full configured run scores -" & idleCost & "."
   let briefing = case selection.selectedVariant
     of pvPlain: bank & "\n\n" & visibility & "\n\n" & motion & "\n\n" & control & "\n\n" & reward
-    of pvNumbered: "1. Bank\n" & bank & "\n2. Visibility\n" & visibility & "\n3. Rolling\n" & motion & "\n4. Program\n" & control & "\n5. Shared score\n" & reward
-    of pvQuestions: "What are we trying to achieve?\n" & bank & "\nHow are we scored?\n" & reward & "\nWhat can I see?\n" & visibility & "\nHow do I move the ball?\n" & motion & "\nWhen do I act?\n" & control
-    of pvReordered: "TEAM SCORE\n" & reward & "\nPROGRAM TIMING\n" & control & "\nINFORMATION\n" & visibility & "\nROLLING\n" & motion & "\nBANK\n" & bank
-    of pvHeldoutBriefing: "Read the assignment.\n" & bank & "\nAccount for limited sight.\n" & visibility & "\nPlan the slope.\n" & motion & "\nSchedule the controller.\n" & control & "\nEvaluate the outcome.\n" & reward
-    of pvHeldoutReference: "Visibility reference: " & visibility & "\nScoring reference: " & reward & "\nMotion reference: " & motion & "\nTiming reference: " & control & "\nGeometry reference: " & bank
+    of pvNumbered:
+      "1. Assignment: operate one of 20 solid pistons to carry a heavy ball from the right " &
+      "wall to the LEFT wall. Number 0 stands beside the left goal; number 19 is at the " &
+      "right start. A piston spans 0.40 m, reaches heights 0.00–1.60 m, and travels at " &
+      "no more than 1.92 m/s. Its head lifts the ball without yielding downward to it.\n" &
+      "2. Information: sight reaches one metre left and one metre right, or five columns. " &
+      "You usually cannot see the ball because it is outside this area. Remember its last " &
+      "appearance and consult adjacent heights. Messages cannot reach fellow pistons.\n" &
+      "3. Slope: downhill motion carries the ball left when heads behind it (right, larger " &
+      "x) rise and heads ahead (left) sink. An early rise blocks the ball with a wall; " &
+      "a late rise happens after it has gone past.\n" &
+      "4. Execution: supply a program once per " & cadence & " seconds. It governs the following " &
+      cadence & " seconds, with deterministic local reactions at 24 Hz. Select the reaction " &
+      "timing and movement distance; the controller monitors the window.\n" &
+      "5. Reward: every seat shares net leftward travel from the drop, valued at 100 points " &
+      "per 7.20 m and bounded below by zero, less 0.24 points each elapsed second. Rightward " &
+      "travel gives back progress. Reaching the goal ends time charges, without a delivery " &
+      "bonus. A motionless full run earns -" & idleCost & "."
+    of pvQuestions:
+      "What is my task? Help nineteen other pistons roll a heavy ball LEFT across the bank, " &
+      "from its right wall to its left wall. The goal is beside piston 0; the starting end " &
+      "is beside piston 19. Your solid head is 0.40 m across, ranges from 0.00 to 1.60 m " &
+      "high, and moves at up to 1.92 m/s. It can lift the ball, which cannot force it down.\n" &
+      "What information reaches me? Only a five-column window extending one metre in each " &
+      "direction. The ball is generally beyond sight; use remembered sightings and nearby " &
+      "head heights then. No writing or messages are shared between players.\n" &
+      "Which slope works? Gravity rolls the ball downhill: raise the right-hand heads " &
+      "behind it at larger x and lower the left-hand heads in front. If you rise before " &
+      "the ball arrives, you obstruct it; if you wait until it passes, the lift misses.\n" &
+      "How often do I decide? Every " & cadence & " seconds, choose a program lasting " &
+      cadence & " seconds. Its deterministic controller checks your view 24 times per second " &
+      "and reacts using your chosen timing and travel distances.\n" &
+      "What earns points? All players get one score: 100 times net leftward metres since " &
+      "the drop divided by 7.20, clamped to at least zero, then reduced by 0.24 per second " &
+      "of play. Backtracking right forfeits progress; delivery ends play, not awards a " &
+      "bonus. With no movement throughout the run, the result is -" & idleCost & "."
+    of pvReordered:
+      "SHARED OBJECTIVE: Everyone earns the same result. Count net displacement left of the " &
+      "drop at 100 points per 7.20 m, never below zero progress, and deduct 0.24 points " &
+      "for each second used. Rightward backtracking reduces that progress. Finishing at " &
+      "the left wall stops the clock with no extra award. Inaction until timeout yields -" &
+      idleCost & ".\n" &
+      "PROGRAM: Your next submission runs for " & cadence & " seconds; submissions are " &
+      cadence & " seconds apart. A deterministic controller observes locally at 24 Hz, " &
+      "applying the reaction timing and height changes you specify.\n" &
+      "VIEW: You see five piston columns, reaching one metre on both sides. Ball sightings " &
+      "occur only within that range and are usually unavailable. Last-seen ball information " &
+      "and neighbouring heights guide blind periods. Other seats receive none of your text; " &
+      "there is no communication channel.\n" &
+      "MECHANICS: A downhill path moves the heavy ball LEFT. Elevate the heads behind it " &
+      "on the right (larger x), and depress those ahead on the left. Premature elevation " &
+      "erects an impassable wall; delayed elevation lets the ball pass first.\n" &
+      "LAYOUT: You own one member of a twenty-piston row. The ball starts at the right wall " &
+      "near number 19 and must reach the left wall near number 0. Width is 0.40 m per " &
+      "piston, height range 0.00–1.60 m, maximum speed 1.92 m/s. Solid heads push the ball " &
+      "up; the ball cannot push heads down."
+    of pvHeldoutBriefing:
+      "Operate your assigned head as part of a twenty-piston team beneath a heavy ball. " &
+      "Transport it from the right-hand wall to the LEFT-hand wall. Labels run from 0 at " &
+      "the left destination to 19 at the right origin. Each head measures 0.40 m across " &
+      "and can travel through 0.00–1.60 m of height at a maximum 1.92 m/s. Heads remain " &
+      "solid under the ball: they raise it rather than being depressed by its weight.\n" &
+      "Work with restricted sight: five columns within one metre on either side of you. " &
+      "Expect the ball to be outside this field most of the time; retain earlier sightings " &
+      "and read surrounding head elevations. You have no means of sending text to teammates.\n" &
+      "Build a descending route to the left. The ball rolls downhill, so heads on its " &
+      "trailing right side, at greater x, should lift while those on its leading left side " &
+      "should descend. Lifting prematurely makes a barrier it cannot surmount; lifting " &
+      "after passage wastes the opportunity.\n" &
+      "Issue one program for each " & cadence & "-second interval. During that interval, " &
+      "a deterministic mechanism samples your window 24 times a second and carries out " &
+      "your choices of response timing and movement extent.\n" &
+      "Judge success by the common team score. Credit net leftward distance from the " &
+      "initial drop at a rate of 100 points for 7.20 m, flooring this credit at zero. " &
+      "Deduct 0.24 points for every second consumed. Retreating right undoes distance " &
+      "credit; arrival ends the run and deductions without adding a bonus. Remaining " &
+      "still for the entire allotted duration produces -" & idleCost & " points."
+    of pvHeldoutReference:
+      "Observation boundary — a radius of one metre to left and right covers five piston " &
+      "columns. Only a ball inside that area is reported, so most decisions lack a visible " &
+      "ball. Prior sightings and neighbours' elevations remain useful. Written output is " &
+      "not delivered to any other player, and players cannot communicate.\n" &
+      "Control interval — renew your program at " & cadence & "-second intervals for the " &
+      "next interval of the same length. Window-based execution is deterministic at 24 " &
+      "updates per second; your program determines when to respond and how much to move.\n" &
+      "Physical arrangement — twenty solid heads support a heavy ball, with width 0.40 m " &
+      "apiece, height limits 0.00 and 1.60 m, and speed limit 1.92 m/s. They lift the ball " &
+      "without being forced downward by it. Index 0 adjoins the left goal wall and index " &
+      "19 adjoins the right starting wall. You control one head in this row.\n" &
+      "Transport principle — move the ball LEFT by providing a downhill slope: heads to " &
+      "its right, behind it at higher x, move upward; heads to its left, ahead of it, move " &
+      "downward. Raising before the right moment blocks passage with a wall; raising after " &
+      "the right moment finds the ball already beyond you.\n" &
+      "Team accounting — all twenty rewards are equal. Convert net metres left of the " &
+      "drop position into points using 100/7.20, with a zero minimum for that progress " &
+      "component; subtract elapsed seconds times 0.24. Moving right reverses progress " &
+      "credit. The goal terminates further play and penalties, with no additional bonus. " &
+      "A full-duration stationary ball gives -" & idleCost & "."
     of pvCanonical, pvMixed: raise newException(ValueError, "alternate wording must resolve")
   briefing & "\n\n" & ReplyRules
 
