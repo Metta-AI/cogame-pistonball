@@ -137,8 +137,16 @@ async def main() -> None:
             for attempt in event["attempts"]:
                 if attempt["origin"] == "model":
                     assert attempt["response_reader_joined"]
-                    assert attempt["response_complete"] is (scenario in ("complete", "large"))
-                    assert attempt["response_body_b64"] == known[attempt["platform_call_id"]]["body_b64"]
+                    if attempt["platform_call_id"] is None:
+                        # STOP may cancel a prepared request before HTTP starts.
+                        assert scenario in ("TERM", "INT")
+                        assert attempt["response_complete"] in (None, False)
+                        assert attempt["http_status"] is None
+                        assert attempt["response_body_b64"] in (None, "")
+                        assert not attempt["accepted"]
+                    else:
+                        assert attempt["response_complete"] is (scenario in ("complete", "large"))
+                        assert attempt["response_body_b64"] == known[attempt["platform_call_id"]]["body_b64"]
             if scenario == "large" and attempt["origin"] == "model" and event["seat"] == "0":
                     assert attempt["prompt_token_ids"] == list(range(32768))
                     assert attempt["sampled_token_ids"] == [7, 8]

@@ -106,8 +106,10 @@ proc stopAndAcknowledge(socket: NativeWebSocket, decisionId, stopId: JsonNode,
     "worker_status": "joined", "attempts": attempts}, cleanupDeadline)
   if sent.kind != wsReady: return false
   while getMonoTime() < cleanupDeadline:
-    let received = socket.receiveCleanupText(cleanupDeadline)
+    let received = socket.receiveCleanupMessage(cleanupDeadline)
     if received.kind != wsMessage: return false
+    # Sprite frames already queued before STOP can precede the private receipt.
+    if received.messageKind.get() == wsmBinary: continue
     let frame = parseJson(received.data)
     if frame["type"].getStr() == "evidence_received" and
         frame["decision_id"] == decisionId and frame["stop_id"] == stopId:
