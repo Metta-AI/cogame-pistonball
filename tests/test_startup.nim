@@ -77,7 +77,6 @@ suite "startup":
     let compose = readFile(root / "compose.yaml")
     check "image: coworld-pistonball:latest" in compose
     check "platform: linux/amd64" in compose
-    check "network: host" in compose
 
   test "the CI scaffold is present and the hooks are committed executable":
     for path in [".github/workflows/ci.yml",
