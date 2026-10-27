@@ -103,7 +103,8 @@ suite "scoring":
     # Reported progress is clamped at zero, which is what makes the -18.000
     # floor the rules promise true; the accumulator itself is left signed, so
     # backsliding inside a run still costs exactly what it gained.
-    let game = runScripted(63352, [blMetronome])
+    # The playing-clock ripple in GV2 changes which seeded bank backslides.
+    let game = runScripted(1, [blMetronome])
     check game.progressMilli < 0                  # the raw sum really is
     check game.progressPoints() == 0              # …and the report is not
     check game.scoreMilli() >= -18_000

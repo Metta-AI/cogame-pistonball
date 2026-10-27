@@ -148,7 +148,7 @@ proc observe*(engine: var DecisionEngine, sim: SimServer) =
       continue
     inc engine.sightingCounts[seat]
     engine.sightings[seat].add(Sighting(
-      tick: sim.tickCount,
+      tick: sim.gameTicksElapsed(),
       dxUm: sim.ballX - pistonCentreX(piston),
       heightUm: FloorY - sim.ballY,
       vxUm: sim.ballVx,

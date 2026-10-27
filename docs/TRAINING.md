@@ -97,8 +97,17 @@ Their policy identities end in `-private-view-v1`; they carry no model call ID.
 Model failures that invoke a baseline remain fallbacks and do not become teacher
 targets. Source and teacher review are still required before dataset admission.
 
+GameVersion 2 measures the episode limit, scripted waves, and private sighting
+timestamps from the start of play. Matched scripts therefore produce the same
+controls and score when player admission is delayed. Version 1 replay hashes
+belong to the archived version 1 viewer; preserve those replay bytes and source
+pins when comparing historical runs.
+
 Verify this distinction through complete twenty-seat episodes:
 
 ```sh
 python tools/test_scripted_trajectory_system.py /tmp/pistonball /tmp/pistonball-player /tmp/piston-scripted-proof
 ```
+
+This check includes a delayed-admission repeat and compares the complete control
+stream, playing duration, and terminal score.

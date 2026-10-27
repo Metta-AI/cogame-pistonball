@@ -1,6 +1,7 @@
 """Run real twenty-seat episodes and verify game-owned teacher/fallback evidence."""
 
 import asyncio
+import hashlib
 import json
 import os
 import socket
@@ -17,7 +18,7 @@ def free_port():
         return listener.getsockname()[1]
 
 
-async def play(game, player, output, baseline, seed):
+async def play(game, player, output, baseline, seed, admission_delay=0):
     output.mkdir(mode=0o700, parents=True)
     port = free_port()
     config = json.loads(Path("coworld_manifest_template.json").read_text())[
@@ -77,6 +78,8 @@ async def play(game, player, output, baseline, seed):
                         break
                 await asyncio.sleep(0.05)
         for seat in range(20):
+            if seat == 19 and admission_delay:
+                await asyncio.sleep(admission_delay)
             player_env = clean | {
                 "COWORLD_PLAYER_WS_URL": f"ws://127.0.0.1:{port}/player?slot={seat}&token=test-{seat}",
                 "PLAYER_SCRIPTED": baseline,
@@ -105,6 +108,14 @@ async def play(game, player, output, baseline, seed):
         record = json.loads(canonical.read_text())
         assert record["episode"]["status"] == "completed"
         assert record["decisions"]
+        outcome = record["episode"]["outcome"]
+        execution = outcome["execution"]
+        playing_ticks = execution["end_tick"] - execution["start_tick"]
+        if outcome["endRule"] == "out_of_time":
+            assert playing_ticks == config["maxTicks"], (
+                playing_ticks,
+                config["maxTicks"],
+            )
         origins = set()
         for decision in record["decisions"]:
             if baseline == "fallback":
@@ -136,9 +147,16 @@ async def play(game, player, output, baseline, seed):
             "origins": sorted(origins),
             "native_calls": 0,
             "scores": json.loads((output / "results.json").read_text())["scores"],
+            "admission_delay_seconds": admission_delay,
+            "start_tick": execution["start_tick"],
+            "playing_ticks": playing_ticks,
+            "controls_sha256": hashlib.sha256(
+                execution["controls_b64"].encode()
+            ).hexdigest(),
         }
         (output / "proof.json").write_text(json.dumps(proof, indent=2) + "\n")
         print(json.dumps(proof), flush=True)
+        return proof
     finally:
         for process in processes:
             if process.returncode is None:
@@ -148,8 +166,16 @@ async def play(game, player, output, baseline, seed):
 
 async def main():
     game, player, output = (Path(value).resolve() for value in sys.argv[1:])
+    proofs = {}
     for seed, baseline in [(703, "wavebot"), (704, "metronome"), (705, "fallback")]:
-        await play(game, player, output / baseline, baseline, seed)
+        proofs[baseline] = await play(game, player, output / baseline, baseline, seed)
+    delayed = await play(
+        game, player, output / "delayed-metronome", "metronome", 704, 0.5
+    )
+    assert delayed["start_tick"] != proofs["metronome"]["start_tick"]
+    assert delayed["playing_ticks"] == proofs["metronome"]["playing_ticks"]
+    assert delayed["scores"] == proofs["metronome"]["scores"]
+    assert delayed["controls_sha256"] == proofs["metronome"]["controls_sha256"]
 
 
 if __name__ == "__main__":
