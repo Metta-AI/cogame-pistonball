@@ -503,7 +503,7 @@ proc step*(sim: var SimServer, commands: openArray[uint8]) =
     sim.emitEvent(Delivered, amount = sim.tickCount)
     sim.finishGame(ReasonComplete, EndRuleDelivered)
     return
-  if sim.config.maxTicks > 0 and sim.tickCount >= sim.config.maxTicks:
+  if sim.config.maxTicks > 0 and sim.gameTicksElapsed() >= sim.config.maxTicks:
     sim.finishGame(ReasonComplete, EndRuleOutOfTime)
     return
   sim.checkInvariants()

@@ -148,7 +148,7 @@ proc observe*(engine: var DecisionEngine, sim: SimServer) =
       continue
     inc engine.sightingCounts[seat]
     engine.sightings[seat].add(Sighting(
-      tick: sim.tickCount,
+      tick: sim.gameTicksElapsed(),
       dxUm: sim.ballX - pistonCentreX(piston),
       heightUm: FloorY - sim.ballY,
       vxUm: sim.ballVx,
@@ -332,6 +332,16 @@ proc installScripted(
   engine.scripts[seat] = script
   engine.haveScript[seat] = true
   engine.phaseInstalled[seat] = true
+  if source == srcScripted:
+    let action = appliedScriptAction(script)
+    var teacher = newDecisionAttempt($turnIndex & "-" & $seat & "-teacher",
+      $kind & "-private-view-v1", aoTeacher)
+    teacher.prompt = %*[{"role": "user", "content": $engine.phaseViews[seat]}]
+    teacher.response = %($action)
+    teacher.parsedAction = action
+    teacher.accepted = true
+    engine.phaseAttempts[seat].add(teacher)
+    engine.phaseSelected[seat] = some(teacher.attemptId)
 
 proc turn*(
   engine: var DecisionEngine,

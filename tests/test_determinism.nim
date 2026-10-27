@@ -27,9 +27,9 @@ suite "determinism":
     let recorded = runScriptedRecording(4417231, [blMetronome])
     let first = replayCommandLog(4417231, recorded.commandLog)
     let second = replayCommandLog(4417231, recorded.commandLog)
-    check recorded.game.tickCount == 1800
+    check recorded.game.gameTicksElapsed() == 1800
     check first.len == recorded.commandLog.len
-    check first.len == 1800
+    check first.len == recorded.game.gameStartTick + 1800
     check first == second
 
   test "a one-unit change in any command byte changes the final hash":

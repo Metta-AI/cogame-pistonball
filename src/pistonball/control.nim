@@ -46,14 +46,14 @@ proc targetHeight*(
   ## note's mode table. `vis` is "the ball centre is inside MY window" and
   ## nothing else: a piston that cannot see the ball has only `blind` to go on.
   if script.mode == modeRipple:
-    return rippleHeight(script, sim.tickCount, piston)
+    return rippleHeight(script, sim.gameTicksElapsed(), piston)
   let visible = inWindow(piston, sim.ballX)
   if not visible:
     if script.blind == blindHold:
       return sim.heights[piston]
     if script.blind == blindIdle:
       return script.idleUm
-    return rippleHeight(script, sim.tickCount, piston)
+    return rippleHeight(script, sim.gameTicksElapsed(), piston)
   let
     dx = int64(sim.ballX) - int64(pistonCentreX(piston))
     lead = int64(sim.ballVx) * int64(script.leadTicks)
@@ -74,7 +74,7 @@ proc targetHeight*(
     if int64(sim.ballVx) > CatchVxUm and dxp <= 0 and within: script.upUm
     else: script.idleUm
   of modeRipple:
-    rippleHeight(script, sim.tickCount, piston)
+    rippleHeight(script, sim.gameTicksElapsed(), piston)
 
 proc pistonCommand*(
   sim: SimServer, script: PistonScript, piston: int

@@ -28,17 +28,17 @@ Everything in the simulation is an integer, because the replay is re-simulated
 by the emscripten/wasm32 build of the same module the native server ran and
 their per-tick gameHash chain must match bit-for-bit.
 
-| Quantity | Unit |
-|---|---|
-| Position, length, piston height | micrometres |
-| Linear velocity | micrometres per tick |
-| Ball angle (angleQ) | 1/16 brad, 0..4095 |
-| Angular velocity (spin) | 1/16 brad per tick |
-| Force | millinewtons |
-| Torque | millinewton-metres |
-| Mass | grams |
-| Moment of inertia | milli-kg m^2 |
-| Shared reward | milli-points |
+| Quantity                        | Unit                 |
+| ------------------------------- | -------------------- |
+| Position, length, piston height | micrometres          |
+| Linear velocity                 | micrometres per tick |
+| Ball angle (angleQ)             | 1/16 brad, 0..4095   |
+| Angular velocity (spin)         | 1/16 brad per tick   |
+| Force                           | millinewtons         |
+| Torque                          | millinewton-metres   |
+| Mass                            | grams                |
+| Moment of inertia               | milli-kg m^2         |
+| Shared reward                   | milli-points         |
 
 World box: x in [0, 9 600 000] um (9.60 m), y in [0, 4 800 000] um (4.80 m),
 origin top-left, y DOWN. Board render scale: 1 board pixel = 8 000 um, so the
@@ -51,14 +51,14 @@ Y = 0 and piston heights are Y values directly.
 
 ## Geometry
 
-| Part | Extent (um, world frame) |
-|---|---|
-| Floor surface | y = 4 400 000; below it is the piston housing, art only |
-| Ceiling | y = 0 |
-| Left wall (the GOAL wall) | x in [0, 800 000], full height |
-| Right wall | x in [8 800 000, 9 600 000], full height |
-| Piston bank | 20 heads spanning x in [800 000, 8 800 000]; piston i occupies x in [800 000 + 400 000 i, 800 000 + 400 000 (i+1)], centre 1 000 000 + 400 000 i |
-| Piston head i | x in [x_i, x_i + 400 000], top surface at y = 4 400 000 - h_i |
+| Part                      | Extent (um, world frame)                                                                                                                         |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Floor surface             | y = 4 400 000; below it is the piston housing, art only                                                                                          |
+| Ceiling                   | y = 0                                                                                                                                            |
+| Left wall (the GOAL wall) | x in [0, 800 000], full height                                                                                                                   |
+| Right wall                | x in [8 800 000, 9 600 000], full height                                                                                                         |
+| Piston bank               | 20 heads spanning x in [800 000, 8 800 000]; piston i occupies x in [800 000 + 400 000 i, 800 000 + 400 000 (i+1)], centre 1 000 000 + 400 000 i |
+| Piston head i             | x in [x_i, x_i + 400 000], top surface at y = 4 400 000 - h_i                                                                                    |
 
 Constants:
 
@@ -79,9 +79,9 @@ Constants:
 At t = 0 the seeded stream that drew perm makes two more draws, and then it is
 done for the episode:
 
-* every head is set to a small random rest height h_i = 10 000 * k for k in
+- every head is set to a small random rest height h_i = 10 000 * k for k in
   0..40 - a slightly rough floor, so no two episodes open identically;
-* the ball is dropped at (BallStartX - startOffsetUm, BallStartY) at rest,
+- the ball is dropped at (BallStartX - startOffsetUm, BallStartY) at rest,
   where startOffsetUm = 20 000 + 10 000 * k for k in 0..17, i.e. 2..20 cm left
   of the drop line. This is not decoration. BallStartX sits exactly on the
   boundary between columns 18 and 19, and a disc whose centre is exactly on a
@@ -103,9 +103,13 @@ instead of bouncing off it for ever. A run is at most maxTicks = 1800 ticks =
 75.0 s of sim time, divided into 8 decision turns of turnTicks = 225 ticks
 (9.375 s).
 
+Since GameVersion 2, this budget starts at the first playing tick. Waiting for
+players in the lobby does not consume play time or shift scripted ripple waves.
+Private sighting timestamps use the same elapsed playing clock.
+
 ## Resolution order, every tick
 
-1. Turn boundary. If tick mod 225 == 0 and the phase is Playing, the scripts
+1. Turn boundary. If elapsed playing ticks mod 225 == 0 and the phase is Playing, the scripts
    collected for the turn become each seat's active script and one `script`
    chat record per seat is written. The script itself is NOT mixed into
    gameHash - the per-tick command bytes it produces are recorded, and those
@@ -164,13 +168,13 @@ dropped beside scores the same -18.000 as one that never moved, and never
 worse. Delivering the ball ends the episode and therefore stops the penalty;
 that, and not a bonus, is the reward for speed.
 
-| Outcome | ticks | final ball X (m) | progress | penalty | score |
-|---|---|---|---|---|---|
-| Textbook wave, delivered in 25 s | 600 | 1.20 | +100.000 | 6.000 | +94.000 |
-| Delivered late after two bounce-backs | 1520 | 1.20 | +100.000 | 15.200 | +84.800 |
-| Three-quarters of the way, out of time | 1800 | 3.00 | +75.000 | 18.000 | +57.000 |
-| Nudged it a metre and jammed | 1800 | 7.40 | +13.889 | 18.000 | -4.111 |
-| Twenty pistons that never moved | 1800 | 8.40 | 0.000 | 18.000 | -18.000 |
+| Outcome                                | ticks | final ball X (m) | progress | penalty | score   |
+| -------------------------------------- | ----- | ---------------- | -------- | ------- | ------- |
+| Textbook wave, delivered in 25 s       | 600   | 1.20             | +100.000 | 6.000   | +94.000 |
+| Delivered late after two bounce-backs  | 1520  | 1.20             | +100.000 | 15.200  | +84.800 |
+| Three-quarters of the way, out of time | 1800  | 3.00             | +75.000  | 18.000  | +57.000 |
+| Nudged it a metre and jammed           | 1800  | 7.40             | +13.889  | 18.000  | -4.111  |
+| Twenty pistons that never moved        | 1800  | 8.40             | 0.000    | 18.000  | -18.000 |
 
 (The rows measure from the 8.40 m drop line; the seeded 2..20 cm offset shifts
 each row by at most 0.3 points.)
@@ -181,13 +185,13 @@ scores every episode is a twenty-way draw and Elo cannot separate anybody.
 
 ## End conditions
 
-| reason | endRule | When |
-|---|---|---|
-| complete | delivered | ballX <= GoalX |
+| reason   | endRule     | When                                         |
+| -------- | ----------- | -------------------------------------------- |
+| complete | delivered   | ballX <= GoalX                               |
 | complete | out_of_time | maxTicks reached with the ball still in play |
-| deadline | wall_clock | wallClockBudgetSeconds elapsed first |
-| fault | sim_fault | an invariant guard tripped |
-| fault | host_error | an unexpected server-side exception |
+| deadline | wall_clock  | wallClockBudgetSeconds elapsed first         |
+| fault    | sim_fault   | an invariant guard tripped                   |
+| fault    | host_error  | an unexpected server-side exception          |
 
 A seat that never connects does NOT end the episode: the lobby join budget
 expires, the no-show is reported to COGAME_PLAYER_FAILURE_URI, its piston is

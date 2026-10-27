@@ -18,6 +18,6 @@ suite "performance":
     echo "1800-tick episode + 36000 controller evaluations: ",
       (elapsed * 1000.0).int, " ms"
     # The label is now an assertion: 1800 ticks x 20 pistons of controller.
-    check game.tickCount == 1800
+    check game.gameTicksElapsed() == 1800
     check not game.delivered()
     check elapsed < 60.0

@@ -16,7 +16,8 @@
 
 const
   GameName* = "pistonball"
-  GameVersion* = "1"
+  GameVersion* = "2"
+    ## GV2 (playing clock): LOBBY WAIT DOES NOT SPEND PLAY TIME OR SHIFT WAVES.
     ## GV1 (first rules): TWENTY PISTONS, ONE BALL, ROLL IT LEFT.
     ## Prepend-only changelog: say what a new number MEANS and what it
     ## obsoletes, and keep the `GVnn (short rule name): HEADLINE` shape so two

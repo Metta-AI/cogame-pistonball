@@ -18,7 +18,7 @@ Episode IDs distinguish wording; seed families group matched scenarios.
 The bridge accepts `text` for JSON scripts; numeric mode keeps eight action heads
 and 66 features. Both modes record rendered message hashes.
 
- Each episode uses the declared
+Each episode uses the declared
 variant configuration and the new `wavebot-private-view-v1` teacher. The
 teacher consumes the same rounded private `windowView` as the live scripted
 baseline. Exact subpixel simulator state is not a teacher input. The ordinary
@@ -90,3 +90,24 @@ The numeric bridge is for training. Ordinary players receive the private
 Prompt policies request `/v1/messages`. The game owns parsing, fallback,
 control, scoring, and replay. The platform supplies `COWORLD_LLM_ENDPOINT` and the native model identity.
 Provider credentials are not a player configuration contract.
+
+Live game-owned `wavebot` and `metronome` decisions retain their exact rounded
+private view, generated script, and applied action as scripted teacher evidence.
+Their policy identities end in `-private-view-v1`; they carry no model call ID.
+Model failures that invoke a baseline remain fallbacks and do not become teacher
+targets. Source and teacher review are still required before dataset admission.
+
+GameVersion 2 measures the episode limit, scripted waves, and private sighting
+timestamps from the start of play. Matched scripts therefore produce the same
+controls and score when player admission is delayed. Version 1 replay hashes
+belong to the archived version 1 viewer; preserve those replay bytes and source
+pins when comparing historical runs.
+
+Verify this distinction through complete twenty-seat episodes:
+
+```sh
+python tools/test_scripted_trajectory_system.py /tmp/pistonball /tmp/pistonball-player /tmp/piston-scripted-proof
+```
+
+This check includes a delayed-admission repeat and compares the complete control
+stream, playing duration, and terminal score.
